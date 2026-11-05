@@ -30,7 +30,7 @@ async function handle(m) {
     if (m.action === 'init') result = await init(m.id, m.direction, m.offline, m.download,m.role);
     else if (m.action === 'transcribe') {
       if (!asr) throw new Error('语音模型未准备好');
-      result = await asr(m.audio, { language: m.direction === 'en-zh' ? 'english' : 'chinese', task: 'transcribe', return_timestamps:true, max_new_tokens:Math.min(224,Math.max(32,Math.ceil(m.audio.length/16000*18))) });
+      result = await asr(m.audio, { language: m.direction === 'en-zh' ? 'english' : 'chinese', task: 'transcribe', return_timestamps:m.timestamps!==false, max_new_tokens:Math.min(224,Math.max(24,Math.ceil(m.audio.length/16000*14))) });
     } else if (m.action === 'translate') {
       const pipe = translators.get(m.direction); if (!pipe) throw new Error('当前方向的离线翻译模型未准备好');
       const out = await pipe(m.text, { max_new_tokens: 256, no_repeat_ngram_size:3 }); result = { text: out[0].translation_text };

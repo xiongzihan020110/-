@@ -1,9 +1,9 @@
 let opening;
 export function database() {
   return opening ||= new Promise((resolve,reject)=>{
-    const req=indexedDB.open('classbridge-library',1);
-    req.onupgradeneeded=()=>{const db=req.result;db.createObjectStore('sessions',{keyPath:'id'});const assets=db.createObjectStore('assets',{keyPath:'id'});assets.createIndex('sessionId','sessionId');};
-    req.onsuccess=()=>resolve(req.result);req.onerror=()=>{opening=null;reject(req.error);};
+    const req=indexedDB.open('classbridge-library',2);
+    req.onupgradeneeded=()=>{const db=req.result;if(!db.objectStoreNames.contains('sessions'))db.createObjectStore('sessions',{keyPath:'id'});if(!db.objectStoreNames.contains('assets')){const assets=db.createObjectStore('assets',{keyPath:'id'});assets.createIndex('sessionId','sessionId');}if(!db.objectStoreNames.contains('preferences'))db.createObjectStore('preferences',{keyPath:'id'});};
+    req.onsuccess=()=>{req.result.onversionchange=()=>{req.result.close();opening=null;};resolve(req.result);};req.onblocked=()=>{opening=null;reject(new Error('请关闭其他旧版听课桥标签页后重试，以升级本地课堂库'));};req.onerror=()=>{opening=null;reject(req.error);};
   });
 }
 async function transaction(store,mode,action){const db=await database();return new Promise((resolve,reject)=>{const tx=db.transaction(store,mode);let result;const req=action(tx.objectStore(store));if(req)req.onsuccess=()=>{result=req.result;};tx.oncomplete=()=>resolve(result);tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error||new Error('本地存储已中断'));});}

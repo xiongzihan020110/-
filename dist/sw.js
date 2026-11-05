@@ -1,6 +1,6 @@
-const SHELL = 'classbridge-shell-v10';
+const SHELL = 'classbridge-shell-v14';
 const RUNTIME = 'classbridge-runtime-v1';
-const FILES = ['./', './index.html', './style.css', './app.js', './core.js', './media-core.js', './media-store.js', './media-library.js', './file-import.js', './browser-speech.js', './translation-api.js', './api-settings.js', './inference-worker.js', './audio-worklet.js', './manifest.webmanifest', './icon.svg', './sample.wav'];
+const FILES = ['./', './index.html', './style.css', './app.js', './core.js', './cloud-speech.js', './file-paths.js', './subtitles.js', './video-links.js', './media-core.js', './media-store.js', './media-library.js', './file-import.js', './browser-speech.js', './translation-api.js', './api-settings.js', './inference-worker.js', './audio-worklet.js', './manifest.webmanifest', './icon.svg', './sample.wav'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(SHELL).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil((async () => { for (const key of await caches.keys()) if (key.startsWith('classbridge-shell-') && key !== SHELL) await caches.delete(key); await self.clients.claim(); })()); });
 self.addEventListener('fetch', event => {

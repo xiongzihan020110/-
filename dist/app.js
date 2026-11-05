@@ -6,6 +6,10 @@ import { beginRecording, recordSamples, finishRecording, playRange, initializePl
 import { sentenceRanges } from './media-core.js';
 import { processFile } from './file-import.js';
 import { browserSpeech, speechSupported } from './browser-speech.js';
+import { restoreDirectories,directoryNames,chooseDirectory,clearDirectories,pickMediaFile,saveToDisk } from './file-paths.js';
+import { parseSubtitles } from './subtitles.js';
+import { cloudConfig,validateCloud,saveCloud,clearCloudKey,recognizeCloud } from './cloud-speech.js';
+import { parseVideoLink,openVideoLink,closeVideoLink,currentVideoLink } from './video-links.js';
 const $ = id => document.getElementById(id);
 const KEY = 'classbridge-session-v1';
 let rows = [], elapsed = 0, active = false, initializing = false, preparing = false, draining = false;
@@ -13,16 +17,17 @@ let stream, context, capture, segmenter, startClock, offset = 0, sequence = 0, q
 let liveSource, runDirection, runMode, runApiConfig, pending = new Map(), requestId = 0, fontSize = 23;
 let modelReady = new Set();
 let sessionId=crypto.randomUUID(),createdAt=Date.now(),persistChain=Promise.resolve(),importing=false,importAbort,speech,runEngine,translationQueue=[],translationRunning=0,liveDraft='',lastLatency=0,stopping=false,flushCapture;
-let selectedRowId=null;
+let sourceLink=null;
+let selectedRowId=null,draftTranslation='',draftTimer,draftRequest=false,draftEpoch=0,lastDraftSent='';
 try { const data = JSON.parse(localStorage.getItem(KEY) || '{}'); rows = (data.rows || []).filter(r => r && typeof r.original === 'string' && Number.isFinite(r.start) && Number.isFinite(r.end)).slice(-5000); elapsed = Number.isFinite(data.elapsed) ? data.elapsed : 0; if (typeof data.course === 'string') $('course').value = data.course; for (const r of rows) if (r.state === 'pending') { r.state = 'failed'; r.error = '上次处理已中断，可重试翻译'; } } catch { /* A corrupt record must not prevent starting a new class. */ }
 function notify(message, error = false) { $('notice').textContent = message; $('notice').classList.toggle('error', error); }
-try{const saved=JSON.parse(localStorage.getItem(KEY)||'{}');if(saved.sessionId)sessionId=saved.sessionId;if(saved.createdAt)createdAt=saved.createdAt;}catch{}
+try{const saved=JSON.parse(localStorage.getItem(KEY)||'{}');if(saved.sessionId)sessionId=saved.sessionId;if(saved.createdAt)createdAt=saved.createdAt;if(typeof saved.sourceLink==='string')sourceLink=saved.sourceLink;}catch{}
 sequence=Math.max(0,...rows.map(r=>Number(r.id)||0));
-function save() { const data={id:sessionId,sessionId,createdAt,updatedAt:Date.now(),rows:rows.filter(r=>!r.demo),elapsed,course:$('course').value};try { localStorage.setItem(KEY, JSON.stringify(data)); } catch { notify('浏览器存储空间不足，请导出当前课堂记录。', true); } const snapshot=structuredClone(data);persistChain=persistChain.then(()=>saveSession(snapshot)).catch(e=>notify(`课堂本地保存失败：${e.message}`,true)); }
+function save() { const data={id:sessionId,sessionId,createdAt,updatedAt:Date.now(),rows:rows.filter(r=>!r.demo),elapsed,course:$('course').value,sourceLink};try { localStorage.setItem(KEY, JSON.stringify(data)); } catch { notify('浏览器存储空间不足，请导出当前课堂记录。', true); } const snapshot=structuredClone(data);persistChain=persistChain.then(()=>saveSession(snapshot)).catch(e=>notify(`课堂本地保存失败：${e.message}`,true)); }
 function currentKey() { return `${$('mode').value}:${$('direction').value}`; }
 function controls() {
   const busy = initializing || preparing; const working=draining||translationRunning>0||translationQueue.length>0; const locked = active || busy || working || importing||stopping;
-  for (const id of ['onlineTab','offlineTab','direction','source','device','prepare','newSession','demo','testAudio','apiSettings','engine','latency','keepRecording','importFile','loadSession','savedSessions']) $(id).disabled = locked;
+  for (const id of ['onlineTab','offlineTab','direction','source','device','prepare','newSession','demo','testAudio','apiSettings','engine','latency','keepRecording','importFile','loadSession','savedSessions','previewTranslation','loadVideoLink','recognizeLink','importSubtitleButton','fastRealtime','localSpeedTest','saveCloudConfig','clearCloudKey','cloudUrl','cloudModel','cloudKey']) $(id).disabled = locked;
   $('start').disabled = busy || importing || (working && !active);
   $('start').textContent = busy ? '正在准备…' : active ? '■ 暂停听课' : working ? '处理剩余字幕…' : '● 开始听课';
   $('statusDot').classList.toggle('on', active);
@@ -31,8 +36,8 @@ function controls() {
   $('device').disabled = locked || $('source').value === 'system'||$('engine').value==='browser';
   $('cancelImport').hidden=!importing;
   $('liveDraft').textContent=liveDraft;
-  for(const id of ['playPause','previousSentence','nextSentence','seekBar'])$(id).disabled=active||importing;
-  $('stagePlaceholder').hidden=!!$('practicePlayer').getAttribute('src')||active;const fileMode=rows.some(r=>r.mediaId);$('historyNav').classList.toggle('active',fileMode);$('liveNav').classList.toggle('active',!fileMode);$('practicePlayer').controls=!active&&!importing;
+  for(const id of ['playPause','previousSentence','nextSentence','seekBar'])$(id).disabled=active||importing||((id==='playPause'||id==='seekBar')&&!!currentVideoLink());
+  $('stagePlaceholder').hidden=!!$('practicePlayer').getAttribute('src')||active||!!currentVideoLink();const fileMode=rows.some(r=>r.mediaId);$('historyNav').classList.toggle('active',fileMode);$('liveNav').classList.toggle('active',!fileMode);$('practicePlayer').controls=!active&&!importing;
   $('pipelineState').textContent=`识别待处理 ${queue.length} · 翻译待处理 ${translationQueue.length+translationRunning}${lastLatency?` · 最近一段识别 ${lastLatency.toFixed(1)}s`:''}`;
 }
 function render() {
@@ -59,8 +64,8 @@ function render() {
   $('timer').textContent = stamp(elapsed);
   updateSelection();if ($('follow').checked&&$('practicePlayer').paused) container.scrollTop = container.scrollHeight;
 }
-function updateSelection(){const selected=rows.find(r=>String(r.id)===String(selectedRowId));for(const element of $('captions').querySelectorAll('.caption-row'))element.classList.toggle('active-row',element.dataset.rowId===String(selectedRowId));$('overlayOriginal').textContent=selected?.original||'';$('overlayTranslation').textContent=selected?.translation||'';}
-async function selectSentence(row){if(active||importing)return;selectedRowId=row.id;updateSelection();try{await playRange(row,sessionId);}catch(e){notify(e.message,true);}}
+function updateSelection(){const selected=rows.find(r=>String(r.id)===String(selectedRowId));for(const element of $('captions').querySelectorAll('.caption-row'))element.classList.toggle('active-row',element.dataset.rowId===String(selectedRowId));$('overlayOriginal').textContent=active&&liveDraft?liveDraft:selected?.original||'';$('overlayTranslation').textContent=active&&liveDraft?draftTranslation:selected?.translation||'';}
+async function selectSentence(row){if(active||importing)return;if(currentVideoLink()){closeVideoLink();controls();}selectedRowId=row.id;updateSelection();try{await playRange(row,sessionId);}catch(e){notify(e.message,true);}}
 const emptyTemplate = $('empty').cloneNode(true);
 function getWorker(role='asr') {
   if (!workers.has(role)) {
@@ -128,18 +133,18 @@ async function start() {
     if (!window.isSecureContext || !navigator.mediaDevices) throw new Error('收音需要 HTTPS 或 localhost 地址');
     if ($('mode').value === 'online' && !navigator.onLine) throw new Error('在线模式需要网络，请切换到已准备好的离线模式');
     if ($('mode').value === 'online') runApiConfig = validateConfig(getOnlineConfig());
-    runEngine=$('engine').value;
+    runEngine=$('engine').value;if(runEngine==='cloud'){if($('mode').value!=='online')throw new Error('云端语音识别必须使用在线模式');validateCloud();}
     if(runEngine==='browser'&&($('mode').value!=='online'||$('source').value!=='mic'))throw new Error('浏览器极速识别仅支持在线模式的默认麦克风；电脑音频与文件导入请使用本地识别');
     if(runEngine==='browser'&&!speechSupported())throw new Error('此浏览器不支持极速在线识别，请选择本地识别');
     // Request capture inside the click gesture before long model work (required for display sharing).
     liveSource = $('source').value;
     if (liveSource === 'system') {
-      stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      stream = await navigator.mediaDevices.getDisplayMedia({ video:true, audio:{suppressLocalAudioPlayback:false}, preferCurrentTab:true, selfBrowserSurface:'include' });
       if (!stream.getAudioTracks().length) throw new Error('没有共享音频，请重新选择浏览器标签页并勾选“共享音频”');
       stream.getVideoTracks().forEach(track => { track.onended = () => { if (active) stop(); }; });
     } else stream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: runEngine!=='browser'&&$('device').value ? { exact: $('device').value } : undefined, channelCount: 1, echoCancellation: true, noiseSuppression: true }, video: false });
     if((await sessionAssets(sessionId).catch(()=>[])).some(a=>a.kind==='file'))await resetCurrent('实时课堂');
-    if (runEngine!=='browser'&&!modelReady.has(currentKey())) await prepare(false);
+    if (runEngine==='local'&&!modelReady.has(currentKey())) await prepare(false);
     if (stream.getAudioTracks().every(t => t.readyState !== 'live')) throw new Error('音频共享已结束，请重新开始');
     runDirection = $('direction').value; runMode = $('mode').value;
     context = new AudioContext({ sampleRate: 16000 }); await context.resume();
@@ -148,14 +153,14 @@ async function start() {
     offset = elapsed;
     await beginRecording(sessionId,offset,$('keepRecording').checked,message=>notify(message,true));
     const maxSeconds=Number($('latency').value);
-    segmenter = new Segmenter(segment => { queue.push({ ...segment, start: segment.start + offset, end: segment.end + offset, direction: runDirection, mode: runMode, apiConfig:runMode === 'online' ? runApiConfig : undefined }); if (queue.length >= 5 && active) { notify('电脑处理速度暂时跟不上讲话，已暂停收音。录音与已收集的语音会保留，请等处理完成后继续。', true); stop(); } void drain(); },16000,{maxSeconds,pauseSeconds:maxSeconds<=3?.3:.5,minSeconds:.65});
+    segmenter = new Segmenter(segment => { queue.push({ ...segment, start: segment.start + offset, end: segment.end + offset, direction: runDirection, mode: runMode,engine:runEngine, apiConfig:runMode === 'online' ? runApiConfig : undefined }); if (queue.length >= 5 && active) { notify('电脑处理速度暂时跟不上讲话，已暂停收音。录音与已收集的语音会保留，请等处理完成后继续。', true); stop(); } void drain(); },16000,{maxSeconds,pauseSeconds:maxSeconds<=3?.3:.5,minSeconds:.65});
     capture.port.onmessage = ({ data }) => {if(data.flushed){flushCapture?.();flushCapture=null;return;} if (!active) return;const samples=resample(data,context.sampleRate);recordSamples(samples);let rms;if(runEngine==='browser'){let sum=0;for(const x of samples)sum+=x*x;rms=Math.sqrt(sum/samples.length);}else rms=segmenter.push(samples); $('meter').style.width = `${Math.min(100, rms * 1000)}%`; };
     const source = context.createMediaStreamSource(new MediaStream(stream.getAudioTracks())); source.connect(capture); capture.connect(context.destination);
     stream.getAudioTracks().forEach(track => { track.onended = () => { if (active) { notify('音频输入已断开，已暂停收音。', true); stop(); } }; });
     active = true; startClock = performance.now();
-    if(runEngine==='browser')speech=browserSpeech({language:runDirection==='en-zh'?'en-US':'zh-CN',clock:()=>active?offset+(performance.now()-startClock)/1000:elapsed,onInterim:text=>{liveDraft=text;$('liveDraft').textContent=text;},onFinal:result=>addRecognized({text:result.text},{...result,direction:runDirection,mode:runMode,apiConfig:runApiConfig,approximate:true}),onError:e=>{notify(e.message,true);void stop();}});
+    if(runEngine==='browser')speech=browserSpeech({language:runDirection==='en-zh'?'en-US':'zh-CN',clock:()=>active?offset+(performance.now()-startClock)/1000:elapsed,onInterim:updateLiveDraft,onFinal:result=>addRecognized({text:result.text},{...result,direction:runDirection,mode:runMode,apiConfig:runApiConfig,approximate:true}),onError:e=>{notify(e.message,true);void stop();}});
     $('audioStatus').textContent = liveSource === 'mic' ? '正在聆听麦克风' : '正在聆听电脑音频';
-    notify(runEngine==='browser'?'正在使用浏览器在线语音服务，音频会发送给浏览器的识别服务。临时原文持续更新，确认后生成译文。':`正在本机收音与识别。短暂停顿或最多 ${maxSeconds} 秒即提交一段，翻译与下一段识别并行。`);
+    notify(runEngine==='cloud'?`正在使用云端语音 API（${new URL(cloudConfig().url).host}），音频片段会上传，识别与文字翻译均可能产生费用。`:runEngine==='browser'?'正在使用浏览器在线语音服务，音频会发送给浏览器的识别服务。临时原文持续更新，确认后生成译文。':`正在本机收音与识别。短暂停顿或最多 ${maxSeconds} 秒即提交一段，翻译与下一段识别并行。`);
     void devices();save(); render();
   } catch (e) {
     active=false;speech?.abort();speech=null;await finishRecording();
@@ -181,8 +186,8 @@ async function drain() {
       const job = queue.shift();
       try {
         const started=performance.now();
-        const output = await model('transcribe', { audio: job.audio, direction: job.direction }, [job.audio.buffer]);
-        lastLatency=(performance.now()-started)/1000;addRecognized(output,job);
+        const output = job.engine==='cloud'?await recognizeCloud(job.audio,job.direction):await model('transcribe', { audio: job.audio, direction: job.direction,timestamps:false }, [job.audio.buffer]);
+        lastLatency=(performance.now()-started)/1000;if(active&&job.engine!=='cloud'&&segmenter){const floor=Number($('latency').value);segmenter.maxSeconds=Math.min(8,Math.max(floor,lastLatency*1.25));}addRecognized(output,job);
       } catch (e) { rows.push({id:++sequence,start:job.start,end:job.end,direction:job.direction,mode:job.mode,original:'[这一段语音识别失败]',unrecognized:true,state:'failed',error:e.message});notify(`处理失败：${e.message}。已保存的录音可以继续精听。`, true); }
       finally { save(); render(); }
     }
@@ -206,40 +211,43 @@ async function retryRow(row) {
   catch (e) { row.state = 'failed'; row.error = e.message; notify(e.message, true); }
   finally { preparing = false; save(); controls(); render(); }
 }
-function setMode(mode) { $('mode').value = mode; $('onlineTab').classList.toggle('selected', mode === 'online'); $('offlineTab').classList.toggle('selected', mode === 'offline'); $('modeHint').textContent = mode === 'online' ? ($('engine').value==='browser'?`麦克风音频发送至浏览器语音识别服务，确认文字发送至 ${apiLabel()} 翻译。`:onlineHint()) : '音频与文字均在本机处理。首次需要联网下载当前方向模型，完成后请断网试用。'; $('apiSettings').hidden = mode !== 'online'; controls(); }
+function setMode(mode) { $('mode').value = mode; $('onlineTab').classList.toggle('selected', mode === 'online'); $('offlineTab').classList.toggle('selected', mode === 'offline'); $('modeHint').textContent = mode === 'online' ? ($('engine').value==='cloud'?`片段音频发送至你配置的云端语音 API，原文发送至 ${apiLabel()} 翻译。`:$('engine').value==='browser'?`麦克风音频发送至浏览器语音识别服务，确认文字发送至 ${apiLabel()} 翻译。`:onlineHint()) : '音频与文字均在本机处理。首次需要联网下载当前方向模型，完成后请断网试用。'; $('apiSettings').hidden = mode !== 'online'; controls(); }
 $('onlineTab').onclick = () => setMode('online'); $('offlineTab').onclick = () => setMode('offline');
 $('direction').onchange = controls; $('source').onchange = () => { controls(); if ($('source').value === 'system') notify('开始后选择播放课程的浏览器标签页，并勾选“共享音频”。系统声音采集以浏览器提供的选项为准。'); };
-async function resetCurrent(title='我的课堂'){save();await persistChain;stopPlayback();$('practicePlayer').removeAttribute('src');$('practicePlayer').load();rows=[];elapsed=0;selectedRowId=null;sessionId=crypto.randomUUID();createdAt=Date.now();$('course').value=title;save();render();await refreshLibrary();controls();}
+async function resetCurrent(title='我的课堂'){closeVideoLink();save();await persistChain;stopPlayback();$('practicePlayer').removeAttribute('src');$('practicePlayer').load();rows=[];elapsed=0;sourceLink=null;selectedRowId=null;sessionId=crypto.randomUUID();createdAt=Date.now();$('course').value=title;save();render();await refreshLibrary();controls();}
 $('newSession').onclick = async()=>{await resetCurrent();notify('新课堂已准备好，之前的字幕与录音保留在本地课堂库。');};
 $('course').onchange = save;
 async function refreshLibrary(){try{const all=(await listSessions()).sort((a,b)=>b.updatedAt-a.updatedAt);$('savedSessions').replaceChildren(new Option('选择已保存的课堂',''));for(const item of all)$('savedSessions').add(new Option(`${item.course||'我的课堂'} · ${new Date(item.createdAt).toLocaleString('zh-CN')} · ${item.rows?.length||0} 句`,item.id));if(all.some(s=>s.id===sessionId))$('savedSessions').value=sessionId;}catch(e){notify(`本地课堂库不可用：${e.message}`,true);}}
-$('loadSession').onclick=async()=>{const id=$('savedSessions').value;if(!id)return;save();await persistChain;const data=await getSession(id);if(!data)return;stopPlayback();sessionId=data.id;createdAt=data.createdAt;rows=data.rows||[];elapsed=data.elapsed||0;$('course').value=data.course||'我的课堂';for(const row of rows)if(row.state==='pending'){row.state='failed';row.error='处理已中断，可以重试翻译';}sequence=Math.max(0,...rows.map(r=>Number(r.id)||0));selectedRowId=null;save();render();$('libraryDialog').close();const media=(await sessionAssets(sessionId)).find(a=>a.kind==='file');if(media)await previewFile(media.id);else{$('practicePlayer').removeAttribute('src');$('practicePlayer').load();}controls();notify('已打开本地课堂，点击字幕可定位原声并逐句精听。');};
-$('exportAudio').onclick=()=>exportRecording(sessionId,$('course').value).catch(e=>notify(e.message,true));
+$('loadSession').onclick=async()=>{const id=$('savedSessions').value;if(!id)return;save();await persistChain;const data=await getSession(id);if(!data)return;closeVideoLink();stopPlayback();sessionId=data.id;sourceLink=typeof data.sourceLink==='string'?data.sourceLink:null;createdAt=data.createdAt;rows=data.rows||[];elapsed=data.elapsed||0;$('course').value=data.course||'我的课堂';for(const row of rows)if(row.state==='pending'){row.state='failed';row.error='处理已中断，可以重试翻译';}sequence=Math.max(0,...rows.map(r=>Number(r.id)||0));selectedRowId=null;save();render();$('libraryDialog').close();const media=(await sessionAssets(sessionId)).find(a=>a.kind==='file');if(media)await previewFile(media.id);else{$('practicePlayer').removeAttribute('src');$('practicePlayer').load();if(sourceLink)openVideoLink(parseVideoLink(sourceLink));}controls();notify('已打开本地课堂，点击字幕可定位原声并逐句精听。');};
+$('exportAudio').onclick=async()=>{try{const path=await exportRecording(sessionId,$('course').value);notify(`录音已导出至：${path}`);}catch(e){if(e.name!=='AbortError')notify(e.message,true);}};
 $('hideTranslations').onchange=()=>document.body.classList.toggle('hide-translations',$('hideTranslations').checked);
-$('importFile').onchange=async event=>{const file=event.target.files?.[0];event.target.value='';if(!file)return;if(file.size>1024*1024*1024){notify('文件超过 1GB，请先分段后导入。',true);return;}
+async function importMedia(file){if(!file)return;closeVideoLink();if(file.size>1024*1024*1024){notify('文件超过 1GB，请先分段后导入。',true);return;}
   importing=true;importAbort=new AbortController();controls();
   try{
     if($('mode').value==='online')validateConfig(getOnlineConfig());if(!modelReady.has(currentKey()))await prepare(false);
     const space=await navigator.storage?.estimate?.();if(space?.quota&&space.quota-space.usage<file.size*1.15)throw new Error('浏览器可用空间不足，请释放空间后再导入');
-    save();await persistChain;rows=[];elapsed=0;sessionId=crypto.randomUUID();createdAt=Date.now();$('course').value=file.name.replace(/\.[^.]+$/,'');stopPlayback();save();render();
+    save();await persistChain;rows=[];elapsed=0;sourceLink=null;sessionId=crypto.randomUUID();createdAt=Date.now();$('course').value=file.name.replace(/\.[^.]+$/,'');stopPlayback();save();render();
     const mediaId=await keepFile(file,sessionId);await previewFile(mediaId);const direction=$('direction').value,mode=$('mode').value,apiConfig=mode==='online'?getOnlineConfig():undefined;
     await processFile(file,async job=>{if(importAbort.signal.aborted)throw new DOMException('已取消','AbortError');const started=performance.now();const output=await model('transcribe',{audio:job.audio,direction},[job.audio.buffer]);lastLatency=(performance.now()-started)/1000;addRecognized(output,{...job,mediaId,direction,mode,apiConfig});if(translationQueue.length>4)await waitTranslations();},(position,duration,stage)=>{elapsed=position;$('importProgress').hidden=false;$('importProgress').value=position;$('importProgress').max=duration;notify(`${stage}：${stamp(position)} / ${stamp(duration)}，已生成 ${rows.length} 句字幕。`);},importAbort.signal);
     await waitTranslations();save();notify('音视频翻译完成，原始文件已保存在本机。点击逐句精听可按字幕回放。');
   }catch(e){notify(e.name==='AbortError'?'已取消后续导入，原文件及已完成的字幕保留在本地课堂库。':`导入失败：${e.message}`,e.name!=='AbortError');save();}
   finally{importing=false;importAbort=null;$('importProgress').hidden=true;await refreshLibrary();render();controls();}
 };
+$('importFile').onchange=event=>{const file=event.target.files?.[0];event.target.value='';void importMedia(file);};
+async function chooseMedia(){if($('importFile').disabled)return;try{if(window.showOpenFilePicker)await importMedia(await pickMediaFile());else $('importFile').click();}catch(e){if(e.name!=='AbortError')notify(e.message,true);}}
+$('importFile').parentElement.addEventListener('click',event=>{if(window.showOpenFilePicker){event.preventDefault();void chooseMedia();}});
 $('cancelImport').onclick=()=>{importAbort?.abort();notify('正在停止导入；当前模型计算结束后会保留已完成结果。');};
 $('engine').onchange=()=>{setMode($('mode').value);if($('engine').value==='browser')notify('极速在线识别会将麦克风音频发送给浏览器语音服务，使用系统默认麦克风。仅在线模式可用；不可保证所有 Chrome / Edge 环境都支持。');};
-function download(type) {
-  const actual = rows.filter(r => !r.demo && r.original); if (!actual.length) { notify('还没有课堂字幕可以导出。示例字幕不会加入导出。'); return; }
-  const text = type === 'srt' ? toSrt(actual) : `${$('course').value}\n\n` + actual.map(r => `[${stamp(r.start)}]\n${r.original}\n${r.translation || '[译文未完成]'}\n`).join('\n');
-  const blob = new Blob(['\ufeff', text], { type: 'text/plain;charset=utf-8' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `${($('course').value || '课堂').replace(/[\\/:*?"<>|]/g, '_')}.${type}`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+async function download(type) {
+  const actual=rows.filter(r=>!r.demo&&r.original);if(!actual.length){notify('还没有可导出的字幕。');return;}
+  const text=type==='json'?JSON.stringify({course:$('course').value,rows:actual.map(r=>({start:r.start,end:r.end,original:r.original,translation:r.translation||'',approximate:!!r.approximate}))},null,2):type==='srt'?toSrt(actual):`${$('course').value}\n\n`+actual.map(r=>`[${stamp(r.start)}]\n${r.original}\n${r.translation||'[译文未完成]'}\n`).join('\n');
+  try{const path=await saveToDisk(new Blob(['\ufeff',text],{type:type==='json'?'application/json':'text/plain;charset=utf-8'}),`${$('course').value||'课堂'}.${type}`);notify(`字幕已导出至：${path}`);}catch(e){if(e.name!=='AbortError')notify(`导出失败：${e.message}`,true);}
 }
-$('exportTxt').onclick = () => download('txt'); $('exportSrt').onclick = () => download('srt');
+$('exportTxt').onclick=()=>download('txt');$('exportSrt').onclick=()=>download('srt');$('exportJson').onclick=()=>download('json');
 $('smaller').onclick = () => { fontSize = Math.max(16, fontSize - 2); document.documentElement.style.setProperty('--caption', `${fontSize}px`); };
 $('larger').onclick = () => { fontSize = Math.min(44, fontSize + 2); document.documentElement.style.setProperty('--caption', `${fontSize}px`); };
 $('fullscreen').onclick = async () => { try { if (document.fullscreenElement) await document.exitFullscreen(); else await document.querySelector('.workspace').requestFullscreen(); } catch { notify('当前浏览器不允许进入全屏。'); } };
-$('historyNav').onclick=()=>{if(!$('importFile').disabled)$('importFile').click();};$('liveNav').onclick=()=>{$('settingsDialog').showModal();};
+$('historyNav').onclick=chooseMedia;$('liveNav').onclick=()=>{$('settingsDialog').showModal();};
 $('help').onclick = () => $('helpDialog').showModal(); for (const id of ['closeHelp','doneHelp']) $(id).onclick = () => $('helpDialog').close();
 $('demo').onclick = () => { if (rows.length) { notify('请先导出记录并创建新课堂，再查看示例。'); $('helpDialog').close(); return; } rows = [{ start: 0, end: 5, original: 'Today, we are going to explore how data helps us make better decisions.', translation: '今天，我们将探讨数据如何帮助我们做出更好的决策。', state: 'done', demo: true }, { start: 5, end: 12, original: 'The first step is to ask the right question, before we look at the numbers.', translation: '在查看数字之前，第一步是提出正确的问题。', state: 'done', demo: true }]; render(); $('helpDialog').close(); notify('当前为界面示例，并非实时识别。点击开始听课会清除示例。'); };
 function network() { $('connection').textContent = navigator.onLine ? '● 网络已连接' : '○ 当前已断网'; if (!navigator.onLine && active && runMode === 'online') { notify('网络已断开，已暂停收音。已识别原文会保留，失败的翻译可稍后重试。', true); stop(); } }
@@ -252,7 +260,7 @@ $('settingsOpen').onclick=$('settingsQuick').onclick=()=> $('settingsDialog').sh
 $('closeSettings').onclick=()=> $('settingsDialog').close();
 $('libraryOpen').onclick=()=>{void refreshLibrary();$('libraryDialog').showModal();};
 $('closeLibrary').onclick=()=> $('libraryDialog').close();
-$('importAgain').onclick=()=>{if(!$('importFile').disabled)$('importFile').click();};
+$('importAgain').onclick=chooseMedia;
 $('subtitleSearch').oninput=render;
 $('playPause').onclick=async()=>{const p=$('practicePlayer');try{if(!p.getAttribute('src')){const first=rows.find(r=>!r.demo);if(first)await selectSentence(first);else notify('先导入音视频，或录制一段课堂音频。');}else if(p.paused)await p.play();else p.pause();}catch(e){notify(e.message,true);}};
 function stepSentence(delta){const playable=rows.filter(r=>r.original&&!r.demo);if(!playable.length)return;let index=playable.findIndex(r=>r.id===selectedRowId);index=index<0?(delta>0?0:playable.length-1):Math.max(0,Math.min(playable.length-1,index+delta));void selectSentence(playable[index]);}
@@ -263,7 +271,28 @@ player.addEventListener('loadedmetadata',()=>{$('stagePlaceholder').hidden=true;
 player.addEventListener('emptied',()=>{$('stagePlaceholder').hidden=active;$('playerTime').textContent='00:00';$('playerDuration').textContent='00:00';$('seekBar').value=0;});
 player.addEventListener('play',()=>{$('playPause').textContent='Ⅱ';});player.addEventListener('pause',()=>{$('playPause').textContent='▶';});
 player.addEventListener('timeupdate',()=>{$('playerTime').textContent=stamp(player.currentTime);if(Number.isFinite(player.duration)&&player.duration>0)$('seekBar').value=player.currentTime/player.duration*1000;});
-document.addEventListener('classbridge-playback',event=>{const time=event.detail.time;const row=rows.find(r=>time>=r.start&&time<r.end);if(row&&row.id!==selectedRowId){selectedRowId=row.id;updateSelection();if($('follow').checked)$('captions').querySelector('.active-row')?.scrollIntoView({block:'center',behavior:'smooth'});}});
+document.addEventListener('classbridge-playback',event=>{const time=event.detail.time;const row=rows.find(r=>time>=r.start&&time<r.end);if(!row){selectedRowId=null;updateSelection();}else if(row.id!==selectedRowId){selectedRowId=row.id;updateSelection();if($('follow').checked)$('captions').querySelector('.active-row')?.scrollIntoView({block:'center',behavior:'smooth'});}});
+function updateLiveDraft(text){liveDraft=text;$('liveDraft').textContent=text?'临时原文：'+text:'';if(!text){draftTranslation='';draftEpoch++;lastDraftSent='';}updateSelection();if(!text){clearTimeout(draftTimer);draftTimer=null;}else if($('previewTranslation').checked&&!draftTimer)draftTimer=setTimeout(()=>{draftTimer=null;void previewLiveTranslation();},500);}
+async function previewLiveTranslation(){if(draftRequest||!active||runMode!=='online'||!liveDraft||liveDraft===lastDraftSent||!$('previewTranslation').checked)return;const text=liveDraft,epoch=draftEpoch;lastDraftSent=text;draftRequest=true;try{const output=await translate(text,runDirection,runMode,runApiConfig);if(active&&epoch===draftEpoch&&liveDraft.startsWith(text)){draftTranslation=output;updateSelection();}}catch{}finally{draftRequest=false;if(active&&liveDraft!==text)draftTimer=setTimeout(()=>{draftTimer=null;void previewLiveTranslation();},400);}}
+function panelState(state){document.body.classList.toggle('panel-hidden',state==='closed');document.body.classList.toggle('panel-collapsed',state==='collapsed');$('collapsePanel').textContent=state==='collapsed'?'⇤':'⇥';$('panelToggle').textContent=state==='open'?'隐藏侧栏':'打开字幕侧栏';try{localStorage.setItem('classbridge-panel-state',state);}catch{}}
+$('panelToggle').onclick=()=>panelState(document.body.classList.contains('panel-hidden')||document.body.classList.contains('panel-collapsed')?'open':'closed');$('closePanel').onclick=()=>panelState('closed');$('collapsePanel').onclick=()=>panelState(document.body.classList.contains('panel-collapsed')?'open':'collapsed');
+try{panelState(localStorage.getItem('classbridge-panel-state')||'open');}catch{panelState('open');}
+$('showVideoSubtitles').onchange=()=>document.body.classList.toggle('overlay-off',!$('showVideoSubtitles').checked);
+$('continuousPlay').onchange=()=>{const row=rows.find(r=>r.id===selectedRowId);if(row&&!active&&!importing)void selectSentence(row);};
+function showDirectories(names=directoryNames()){$('directoryStatus').textContent=`导入目录：${names.import}\n录音与字幕导出目录：${names.export}`;}
+for(const [id,kind] of [['chooseImportDirectory','import'],['chooseExportDirectory','export']])$(id).onclick=async()=>{try{showDirectories(await chooseDirectory(kind));}catch(e){if(e.name!=='AbortError')notify(e.message,true);}};
+$('resetDirectories').onclick=async()=>showDirectories(await clearDirectories());void restoreDirectories().then(showDirectories).catch(e=>{showDirectories();notify(e.message,true);});
+async function importSubtitle(file){if(!file)return;try{if(file.size>10*1024*1024)throw new Error('字幕文件超过 10MB');const parsed=parseSubtitles(await file.text(),file.name.split('.').at(-1));if(rows.length&&!confirm('导入字幕会替换当前字幕，请确认已导出需要保留的内容。继续吗？'))return;const asset=(await sessionAssets(sessionId)).find(a=>a.kind==='file');rows=parsed.map(r=>({...r,id:++sequence,mediaId:asset?.id,direction:$('direction').value,mode:$('mode').value,state:r.translation?'done':'failed',error:r.translation?undefined:'此字幕没有译文，可重试翻译'}));elapsed=Math.max(elapsed,...rows.map(r=>r.end));selectedRowId=null;save();render();await refreshLibrary();notify(`已导入 ${rows.length} 句字幕，可与当前媒体同步播放。`);}catch(e){notify(`字幕导入失败：${e.message}`,true);}};
+$('importSubtitleButton').onclick=async()=>{try{if(window.showOpenFilePicker)await importSubtitle(await pickMediaFile(true));else $('subtitleFile').click();}catch(e){if(e.name!=='AbortError')notify(e.message,true);}};$('subtitleFile').onchange=event=>{const file=event.target.files?.[0];event.target.value='';void importSubtitle(file);};
+$('fastRealtime').onclick=()=>{if(!speechSupported()){notify('此浏览器不支持流式在线识别，可选择 1.8 秒本地分段；建议使用 Windows Chrome。',true);return;}$('engine').value='browser';$('source').value='mic';setMode('online');$('settingsDialog').showModal();notify('已选择极速在线麦克风，音频会发送到浏览器语音服务；点击“开始听课”后可持续显示临时原文和译文。');};
+$('linkOpen').onclick=()=>{$('linkStatus').textContent='';if(sourceLink)$('videoUrl').value=sourceLink;$('linkDialog').showModal();};$('closeLink').onclick=()=>$('linkDialog').close();
+$('loadVideoLink').onclick=async()=>{try{if(active||importing)throw new Error('请先暂停当前识别或导入');const link=parseVideoLink($('videoUrl').value);$('openOriginalVideo').href=link.url;$('openOriginalVideo').hidden=false;await resetCurrent(link.title);stopPlayback();sourceLink=link.url;openVideoLink(link);save();$('linkDialog').close();controls();notify('外链播放器已载入。点击视频播放；若要识别，请在“粘贴链接”中选择共享标签页音频。平台网络、登录和站外播放限制由平台决定。');}catch(e){$('linkStatus').textContent=e.message;}};
+$('closeNetworkVideo').onclick=()=>{closeVideoLink();sourceLink=null;save();controls();$('linkDialog').close();};
+$('recognizeLink').onclick=()=>{if(!currentVideoLink()){$('linkStatus').textContent='请先载入一个视频链接';return;}$('source').value='system';if($('engine').value==='browser')$('engine').value='local';$('linkDialog').close();notify('请选择当前听课桥标签页并勾选共享音频，然后播放视频。');void start();};
+$('localSpeedTest').onclick=async()=>{preparing=true;controls();let decoder;try{await cacheShell();await model('init',{direction:'en-zh',offline:false,download:false,role:'asr'});decoder=new AudioContext({sampleRate:16000});const response=await fetch('./sample.wav');const buffer=await decoder.decodeAudioData(await response.arrayBuffer());const samples=resample(buffer.getChannelData(0),buffer.sampleRate).slice(0,32000);const started=performance.now();await model('transcribe',{audio:samples,direction:'en-zh',timestamps:false},[samples.buffer]);const seconds=(performance.now()-started)/1000;notify(`本机测试：2 秒语音，识别耗时 ${seconds.toFixed(2)} 秒（不含翻译与分段等待）。${seconds>=1.8?'本机 CPU 难以跟上 1.8 秒分段，建议极速在线或云端语音 API。':'本机识别耗时低于当前最快分段，仍需加上翻译与网络等待。'}`);}catch(e){notify(`速度测试失败：${e.message}。请先准备本地识别模型。`,true);}finally{await decoder?.close().catch(()=>{});preparing=false;controls();}};
+$('cloudUrl').value=cloudConfig().url;$('cloudModel').value=cloudConfig().model;$('saveCloudConfig').onclick=()=>{try{saveCloud({url:$('cloudUrl').value,model:$('cloudModel').value},$('cloudKey').value);$('cloudKey').value='';$('cloudStatus').textContent='语音 API 配置已应用，密钥仅留在本页内存；请再选择“云端语音 API”引擎。';}catch(e){$('cloudStatus').textContent=e.message;}};$('clearCloudKey').onclick=()=>{clearCloudKey();$('cloudKey').value='';$('cloudStatus').textContent='语音密钥已清除。';};
 initializeApiSettings(() => setMode($('mode').value), notify);
-initializePlayer();void refreshLibrary();void(async()=>{const asset=(await sessionAssets(sessionId)).find(a=>a.kind==='file');if(asset)await previewFile(asset.id);controls();})().catch(e=>notify(`媒体恢复失败：${e.message}`,true));
+try{const preferences=JSON.parse(localStorage.getItem('classbridge-view-preferences')||'{}');for(const id of ['showVideoSubtitles','hideTranslations','continuousPlay','loopSentence'])if(typeof preferences[id]==='boolean')$(id).checked=preferences[id];document.body.classList.toggle('overlay-off',!$('showVideoSubtitles').checked);document.body.classList.toggle('hide-translations',$('hideTranslations').checked);}catch{}
+for(const id of ['showVideoSubtitles','hideTranslations','continuousPlay','loopSentence'])$(id).addEventListener('change',()=>{try{localStorage.setItem('classbridge-view-preferences',JSON.stringify(Object.fromEntries(['showVideoSubtitles','hideTranslations','continuousPlay','loopSentence'].map(name=>[name,$(name).checked]))));}catch{}});
+initializePlayer();void refreshLibrary();void(async()=>{const asset=(await sessionAssets(sessionId)).find(a=>a.kind==='file');if(asset)await previewFile(asset.id);else if(sourceLink)openVideoLink(parseVideoLink(sourceLink));controls();})().catch(e=>notify(`媒体恢复失败：${e.message}`,true));
 setMode('online'); network(); controls(); render(); void devices(); cacheShell().catch(e => notify(e.message, true));
