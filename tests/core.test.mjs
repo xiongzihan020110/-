@@ -1,0 +1,10 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { Segmenter, splitForApi, stamp, toSrt, resample } from '../dist/core.js';
+test('UTF-8 chunks fit API limit and preserve Chinese, emoji and spaces', () => { const text = '课堂翻译 🧑‍🏫 hello '.repeat(100); const chunks = splitForApi(text); assert.equal(chunks.join(''), text); assert.ok(chunks.every(x => new TextEncoder().encode(x).length <= 480)); });
+test('SRT handles hour and millisecond boundaries', () => { assert.equal(stamp(3599.9996, true), '01:00:00,000'); assert.match(toSrt([{start:0,end:2,original:'Hello',translation:'你好'}]), /00:00:00,000 --> 00:00:02,000\nHello\n你好/); });
+test('silence produces no hallucination-prone segment', () => { const out = []; const s = new Segmenter(x => out.push(x)); for (let i=0;i<100;i++) s.push(new Float32Array(2048)); s.flush(); assert.equal(out.length, 0); });
+test('speech followed by pause flushes and preserves timeline', () => { const out = []; const s = new Segmenter(x => out.push(x)); for (let i=0;i<16;i++) s.push(new Float32Array(2048).fill(.05)); for (let i=0;i<7;i++) s.push(new Float32Array(2048)); assert.equal(out.length,1); assert.ok(out[0].end > 2); assert.equal(out[0].audio.length, Math.round((out[0].end-out[0].start)*16000)); });
+test('long speech splits without losing samples', () => { const out = []; const s = new Segmenter(x=>out.push(x)); for(let i=0;i<150;i++) s.push(new Float32Array(2048).fill(.1)); s.flush(); assert.equal(out.reduce((n,x)=>n+x.audio.length,0),150*2048); assert.ok(out.length>=2); });
+test('resampling produces 16kHz samples', () => { assert.equal(resample(new Float32Array(48000).fill(.25),48000).length,16000); assert.equal(resample(new Float32Array(48000).fill(.25),48000)[100],.25); });
+test('pause during segment callback cannot emit the same audio twice', () => { let count = 0; const s = new Segmenter(() => { count++; s.flush(); }); for(let i=0;i<10;i++) s.push(new Float32Array(2048).fill(.1)); s.flush(); assert.equal(count,1); });
