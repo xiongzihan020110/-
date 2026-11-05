@@ -22,7 +22,7 @@ export class Segmenter {
   reset() { this.parts = []; this.length = 0; this.quiet = 0; this.voiced = 0; this.pre = []; }
   push(samples) {
     let energy = 0; for (const x of samples) energy += x * x;
-    const rms = Math.sqrt(energy / samples.length); const voice = rms > .008;
+    const rms = Math.sqrt(energy / samples.length); const voice = rms > .002;
     if (voice && !this.length) { this.start = Math.max(0, this.position - this.pre.reduce((n, x) => n + x.length, 0)); this.parts.push(...this.pre); this.length = this.pre.reduce((n, x) => n + x.length, 0); this.pre = []; }
     if (this.length || voice) { this.parts.push(samples); this.length += samples.length; if (voice) { this.voiced += samples.length; this.quiet = 0; } else this.quiet += samples.length; }
     else { this.pre.push(samples); while (this.pre.reduce((n, x) => n + x.length, 0) > this.rate * .3) this.pre.shift(); }

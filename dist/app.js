@@ -41,6 +41,7 @@ function controls() {
   for(const id of ['playPause','previousSentence','nextSentence','seekBar'])$(id).disabled=active||importing||((id==='playPause'||id==='seekBar')&&!!currentVideoLink());
   $('stagePlaceholder').hidden=!!$('practicePlayer').getAttribute('src')||active||!!currentVideoLink();const fileMode=rows.some(r=>r.mediaId);$('historyNav').classList.toggle('active',fileMode);$('liveNav').classList.toggle('active',!fileMode);$('practicePlayer').controls=!active&&!importing;
   $('externalAudioBar').hidden=!currentVideoLink();$('connectExternalAudio').hidden=active&&liveSource==='system';$('stopExternalAudio').hidden=!(active&&liveSource==='system');$('stopExternalAudio').disabled=stopping;if(currentVideoLink()&&!active&&!busy&&!stopping){if(working)externalState('processing','正在完成已采集语音的识别与翻译…');else if(['processing','translating','receiving'].includes(externalPhase))externalState('idle','已完成采集内容的翻译。点击连接可继续。');}
+  $('retryFailed').disabled=locked||!rows.some(r=>r.state==='failed'&&!r.unrecognized);
   $('pipelineState').textContent=`识别待处理 ${queue.length} · 翻译待处理 ${translationQueue.length+translationRunning}${lastLatency?` · 最近一段识别 ${lastLatency.toFixed(1)}s`:''}`;
 }
 function render() {
@@ -54,7 +55,7 @@ function render() {
     const meta = document.createElement('div'); meta.className = 'row-meta';
     const time = document.createElement('span'); time.textContent = `${index+1} · ${stamp(r.start)}`;
     const tag = document.createElement('span'); tag.className = 'tag'; tag.textContent = r.demo ? '示例 · 非实时' : r.mode === 'offline' ? '本地离线' : '在线翻译';
-    meta.append(time, tag);
+    meta.append(time, tag);if(r.unconfirmed){const warning=document.createElement('span');warning.textContent='识别中断前的临时原文 · 请回听核对';meta.append(warning);}
     const original = document.createElement('p'); original.className = 'original'; original.textContent = r.original || '正在识别这一段语音…';
     const translated = document.createElement('p'); translated.className = `translation${r.state === 'failed' ? ' failed' : ''}`; translated.textContent = captionTranslation(r);
     row.append(meta, original, translated);
@@ -62,6 +63,7 @@ function render() {
     if (r.state === 'failed' && r.original&&!r.unrecognized) { const retry = document.createElement('button'); retry.className = 'retry'; retry.textContent = '↻ 重试翻译'; retry.disabled = active || initializing || preparing || draining||importing||translationRunning>0; retry.onclick = () => retryRow(r); row.append(retry); }
     container.append(row);
   }
+  $('failureSummary').textContent=rows.some(r=>r.state==='failed')?`识别失败 ${rows.filter(r=>r.unrecognized).length} · 翻译失败 ${rows.filter(r=>r.state==='failed'&&!r.unrecognized).length}`:'';
   $('recordCount').textContent = rows.filter(r => !r.demo && r.original).length;
   $('recordSummary').textContent = rows.some(r => r.demo) ? '当前为示例测试，不会保存或加入课堂导出。' : rows.length ? `${rows.filter(r => !r.demo && r.original).length} 段课堂字幕 · 已在本机自动保存` : '字幕会自动保存，课后也能继续回顾。';
   $('timer').textContent = stamp(elapsed);
@@ -169,7 +171,7 @@ async function start(options={}) {
     const source = context.createMediaStreamSource(new MediaStream(stream.getAudioTracks())); source.connect(capture); capture.connect(context.destination);
     stream.getAudioTracks().forEach(track => { track.onended = () => { if (active) { notify('音频输入已断开，已暂停收音。', true); stop(); } }; });
     active = true; startClock = performance.now();lastAudioSignal=startClock;lastCaptureSignal=startClock;if(currentVideoLink())externalState('listening','音频已连接。请播放视频；音量指示有变化后开始识别。');
-    if(runEngine==='browser')speech=browserSpeech({language:runDirection==='en-zh'?'en-US':'zh-CN',clock:()=>active?offset+(performance.now()-startClock)/1000:elapsed,onInterim:updateLiveDraft,onFinal:result=>{updateLiveDraft('');addRecognized({text:result.text},{...result,direction:runDirection,mode:runMode,engine:'browser',apiConfig:runApiConfig,approximate:true});},onError:e=>{notify(e.message,true);void stop();}});
+    if(runEngine==='browser')speech=browserSpeech({language:runDirection==='en-zh'?'en-US':'zh-CN',clock:()=>active?offset+(performance.now()-startClock)/1000:elapsed,onInterim:updateLiveDraft,onFinal:result=>{updateLiveDraft('');addRecognized({text:result.text},{...result,direction:runDirection,mode:runMode,engine:'browser',apiConfig:runApiConfig,approximate:true,unconfirmed:!!result.provisional});},onError:e=>{notify(e.message,true);void stop();}});
     $('audioStatus').textContent = liveSource === 'mic' ? '正在聆听麦克风' : '正在聆听电脑音频';
     notify(runEngine==='cloud'?`正在使用云端语音 API（${new URL(cloudConfig().url).host}），音频片段会上传，识别与文字翻译均可能产生费用。`:runEngine==='browser'?'正在使用浏览器在线语音服务，音频会发送给浏览器的识别服务。临时原文持续更新，确认后生成译文。':`正在本机收音与识别。短暂停顿或最多 ${maxSeconds} 秒即提交一段，翻译与下一段识别并行。`);
     void devices();save(); render();
@@ -206,9 +208,9 @@ async function drain() {
   } finally { draining = false; controls(); render(); }
 }
 function addRecognized(output,job){
-  const text=(output.text||'').trim();if(!text||/^\[.*\]$/.test(text))return;
+  const text=(output.text||'').trim();if(!text||/^\[.*\]$/.test(text)){rows.push({id:++sequence,start:job.start,end:job.end,direction:job.direction,mode:job.mode,original:'[这一段未识别出文字，请回听录音]',unrecognized:true,state:'failed',error:'请检查输入音量或换用语音识别引擎'});save();render();notify('有语音片段未识别出文字，已标记时间，可回听录音。',true);return;}
   const chunks=output.chunks?.filter(c=>c.text?.trim())||[];const pieces=chunks.length?chunks.flatMap(c=>{const from=job.start+Math.max(0,Number(c.timestamp?.[0])||0),to=Math.min(job.end,job.start+(Number(c.timestamp?.[1])||job.end-job.start));return sentenceRanges(c.text,from,Math.max(from+.1,to)).map(r=>({...r,approximate:!!job.approximate||/[.!?。！？].+[^\s]/.test(c.text)}));}):sentenceRanges(text,job.start,job.end);
-  for(const piece of pieces){const row={...piece,id:++sequence,direction:job.direction,mode:job.mode,apiConfig:job.apiConfig,mediaId:job.mediaId,translation:'',state:'pending'};rows.push(row);translationQueue.push(row);if(active||job.engine)selectedRowId=row.id;}save();render();pumpTranslations();if(currentVideoLink()&&active)externalState('translating','已识别原文，正在生成译文；两处字幕使用同一句内容。');
+  for(const piece of pieces){const row={...piece,id:++sequence,direction:job.direction,mode:job.mode,apiConfig:job.apiConfig,mediaId:job.mediaId,unconfirmed:!!job.unconfirmed,translation:'',state:'pending'};rows.push(row);translationQueue.push(row);if(active||job.engine)selectedRowId=row.id;}save();render();pumpTranslations();if(currentVideoLink()&&active)externalState('translating','已识别原文，正在生成译文；两处字幕使用同一句内容。');
   if(translationQueue.length>20&&active){notify('翻译队列积压，已暂停收音；原文和录音已保留。可换用更快的翻译 API。',true);void stop();}
 }
 function pumpTranslations(){
@@ -216,8 +218,9 @@ function pumpTranslations(){
   while(translationRunning<limit&&translationQueue.length){const row=translationQueue.shift();translationRunning++;void(async()=>{try{row.translation=await translate(row.original,row.direction,row.mode,row.apiConfig);row.state='done';if(currentVideoLink()&&active)externalState('receiving','实时翻译已更新，画面与侧栏同步。');}catch(e){row.state='failed';row.error=e.message;notify(`翻译失败：${e.message}，原文与录音保留。`,true);}finally{translationRunning--;save();render();pumpTranslations();if(currentVideoLink()&&active)externalState('translating','已识别原文，正在生成译文；两处字幕使用同一句内容。');controls();}})();}controls();
 }
 async function waitTranslations(){while(translationRunning||translationQueue.length)await new Promise(resolve=>setTimeout(resolve,100));}
+$('retryFailed').onclick=()=>{const config=getOnlineConfig();for(const row of rows.filter(r=>r.state==='failed'&&!r.unrecognized)){row.mode=$('mode').value;row.apiConfig=config;row.state='pending';delete row.error;translationQueue.push(row);}save();render();pumpTranslations();};
 async function retryRow(row) {
-  if (row.unrecognized) { notify('这一段原始语音已释放，无法恢复识别，请重新收音。', true); return; }
+  if (row.unrecognized) { notify('可点击逐句精听回听已保存的原始录音。', true); return; }
   preparing = true; controls();
   try { if (row.mode === 'offline' && !modelReady.has(`offline:${row.direction}`)) { await model('init', { direction: row.direction, offline: true, download: false,role:'translation' }); modelReady.clear(); modelReady.add(`offline:${row.direction}`); } row.state = 'pending'; render(); row.translation = await translate(row.original, row.direction, row.mode); row.state = 'done'; delete row.error; }
   catch (e) { row.state = 'failed'; row.error = e.message; notify(e.message, true); }

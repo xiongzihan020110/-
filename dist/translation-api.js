@@ -1,6 +1,7 @@
 import { splitForApi } from './core.js';
 
 export const PROVIDERS = {
+  openai: { label: 'OpenAI · 填写密钥即可', protocol: 'chat', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4.1-mini' },
   mymemory: { label: 'MyMemory · 免费额度', protocol: 'mymemory', baseUrl: 'https://api.mymemory.translated.net/get', model: '' },
   deepseek: { label: 'DeepSeek', protocol: 'chat', baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash' },
   siliconflow: { label: '硅基流动', protocol: 'chat', baseUrl: 'https://api.siliconflow.cn/v1', model: '' },
@@ -41,13 +42,15 @@ export function redact(message, key = '') {
   return safe.replace(/Bearer\s+\S+/gi, 'Bearer [已隐藏]').slice(0, 300);
 }
 
-async function requestJson(url, options, config, key, fetcher) {
+async function requestJson(url, options, config, key, fetcher, attempt = 0) {
   let response;
   try { response = await fetcher(url, { ...options, signal: AbortSignal.timeout(config.timeout * 1000), credentials: 'omit', cache: 'no-store', redirect: 'error', referrerPolicy: 'no-referrer' }); }
   catch (error) {
+    if (attempt < 2) { await new Promise(resolve=>setTimeout(resolve,500*(attempt+1))); return requestJson(url,options,config,key,fetcher,attempt+1); }
     if (error.name === 'TimeoutError' || error.name === 'AbortError') throw new Error('API 请求超时，可在设置中延长等待时间');
     throw new Error('无法连接 API。请检查地址、网络和服务商是否允许浏览器跨域（CORS）；也可使用你自己的兼容代理');
   }
+  if ([408,502,503,504].includes(response.status) && attempt < 2) { await new Promise(resolve=>setTimeout(resolve,500*(attempt+1))); return requestJson(url,options,config,key,fetcher,attempt+1); }
   let data; try { data = await response.json(); } catch { throw new Error(`API 返回了非 JSON 内容（HTTP ${response.status}），请检查接口路径`); }
   if (!response.ok) {
     const details = typeof data.error === 'string' ? data.error : data.error?.message || data.message || '';

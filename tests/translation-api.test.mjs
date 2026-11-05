@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { endpointFor, normalizeConfig, validateConfig, translateOnline } from '../dist/translation-api.js';
 const response = data => new Response(JSON.stringify(data), { status:200, headers:{'Content-Type':'application/json'} });
+test('OpenAI preset supplies a complete endpoint and model',()=>{assert.equal(endpointFor({provider:'openai'}),'https://api.openai.com/v1/chat/completions');assert.equal(validateConfig({provider:'openai'}).model,'gpt-4.1-mini');});
+test('temporary service failures retry the same provider and preserve sentence',async()=>{let calls=0;const out=await translateOnline('Hello','en-zh',{provider:'openai'},'key',async(url,options)=>{calls++;assert.equal(JSON.parse(options.body).messages[1].content,'Hello');return calls===1?new Response('unavailable',{status:503}):response({choices:[{message:{content:'你好'}}]});});assert.equal(calls,2);assert.equal(out,'你好');});
 test('normalizes protocol paths and rejects secrets in URLs', () => {
   assert.equal(endpointFor({provider:'compatible',baseUrl:'https://example.com/v1/'}),'https://example.com/v1/chat/completions');
   assert.equal(endpointFor({provider:'compatible',baseUrl:'https://example.com/v1/chat/completions'}),'https://example.com/v1/chat/completions');

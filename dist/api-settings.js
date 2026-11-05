@@ -14,6 +14,7 @@ export function initializeApiSettings(onChange, notify) {
     draftProvider = id; const config = normalizeConfig(profiles[id] || { provider:id });
     selector.value = id; $('apiBaseUrl').value = config.baseUrl; $('apiModel').value = config.model; $('apiTimeout').value = config.timeout; $('apiKey').value = keys.get(id) || '';
     const protocol = PROVIDERS[id].protocol;
+    $('apiAdvanced').open = ['compatible','libretranslate','siliconflow'].includes(id); $('apiAdvanced').hidden = protocol === 'mymemory';
     $('apiModelField').hidden = protocol !== 'chat'; $('apiUrlField').hidden = protocol === 'mymemory'; $('apiKeyField').hidden = protocol === 'mymemory';
     $('apiResult').textContent = protocol === 'mymemory' ? '默认免费服务，无需密钥。存在每日额度限制。' : '填写后可发送一句示例文字，检查连接和翻译结果。';
     $('apiKeyState').textContent = keys.has(id) ? '本页已填写密钥，刷新后清除。' : '未填写密钥；无鉴权的自建服务可留空。';
@@ -24,13 +25,18 @@ export function initializeApiSettings(onChange, notify) {
   $('apiClose').onclick = () => { $('apiKey').value = ''; $('apiDialog').close(); };
   $('apiDialog').addEventListener('close', () => { $('apiKey').value = ''; });
   $('clearApiKey').onclick = () => { keys.delete(draftProvider); $('apiKey').value = ''; $('apiKeyState').textContent = '当前服务的本页密钥已清除。'; };
-  $('apiSave').onclick = () => {
+  $('apiSave').onclick = async () => {
+    $('apiSave').disabled=true;
     try {
-      const config = draft(); const key = $('apiKey').value.trim(); profiles[config.provider] = config; selected = config.provider;
+      const config = draft(); const key = $('apiKey').value.trim();
+      if(['openai','deepseek','siliconflow'].includes(config.provider)&&!key)throw new Error('请先填写该服务商的 API Key。ChatGPT 登录不会自动提供密钥。');
+      $('apiResult').textContent='正在测试连接与翻译…';
+      await translateOnline('Hello.', 'en-zh', config, key);
+      profiles[config.provider] = config; selected = config.provider;
       if (key) keys.set(selected, key); else keys.delete(selected);
       try { localStorage.setItem(STORAGE, JSON.stringify({ selected, profiles })); } catch { notify('API 配置已在本页应用，但浏览器无法持久保存配置。', true); }
       $('apiDialog').close(); $('apiKey').value = ''; onChange(); notify(`在线服务已切换为 ${apiLabel()}。${selected === 'mymemory' ? '' : `请求地址：${endpointFor(config)}。`}`);
-    } catch (e) { $('apiResult').textContent = e.message; }
+    } catch (e) { $('apiResult').textContent = `未应用配置：${e.message}`; } finally { $('apiSave').disabled=false; }
   };
   $('apiTest').onclick = async () => {
     let config; try { config = draft(); } catch(e) { $('apiResult').textContent = e.message; return; }
