@@ -1,5 +1,5 @@
 class CaptureProcessor extends AudioWorkletProcessor {
-  constructor() { super(); this.buffer = new Float32Array(2048); this.offset = 0; }
+  constructor() { super(); this.buffer = new Float32Array(2048); this.offset = 0; this.port.onmessage=({data})=>{if(data==='flush'){if(this.offset){const tail=this.buffer.slice(0,this.offset);this.port.postMessage(tail,[tail.buffer]);this.offset=0;}this.port.postMessage({flushed:true});}}; }
   process(inputs, outputs) {
     const channels = inputs[0];
     if (channels?.length) {

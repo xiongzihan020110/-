@@ -18,7 +18,7 @@ export function resample(input, rate, target = 16000) {
   return output;
 }
 export class Segmenter {
-  constructor(onSegment, rate = 16000) { this.emit = onSegment; this.rate = rate; this.reset(); this.position = 0; }
+  constructor(onSegment, rate = 16000, options = {}) { this.emit = onSegment; this.rate = rate; this.maxSeconds = options.maxSeconds ?? 8; this.pauseSeconds = options.pauseSeconds ?? .7; this.minSeconds = options.minSeconds ?? 1.2; this.reset(); this.position = 0; }
   reset() { this.parts = []; this.length = 0; this.quiet = 0; this.voiced = 0; this.pre = []; }
   push(samples) {
     let energy = 0; for (const x of samples) energy += x * x;
@@ -27,7 +27,7 @@ export class Segmenter {
     if (this.length || voice) { this.parts.push(samples); this.length += samples.length; if (voice) { this.voiced += samples.length; this.quiet = 0; } else this.quiet += samples.length; }
     else { this.pre.push(samples); while (this.pre.reduce((n, x) => n + x.length, 0) > this.rate * .3) this.pre.shift(); }
     this.position += samples.length;
-    if (this.length >= this.rate * 8 || (this.length >= this.rate * 1.2 && this.quiet >= this.rate * .7)) this.flush();
+    if (this.length >= this.rate * this.maxSeconds || (this.length >= this.rate * this.minSeconds && this.quiet >= this.rate * this.pauseSeconds)) this.flush();
     return rms;
   }
   flush() { let segment; if (this.voiced >= this.rate * .2) { const audio = new Float32Array(this.length); let offset = 0; for (const part of this.parts) { audio.set(part, offset); offset += part.length; } segment = { audio, start: this.start / this.rate, end: (this.start + this.length) / this.rate }; } this.reset(); if (segment) this.emit(segment); }

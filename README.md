@@ -1,62 +1,73 @@
 # 听课桥 / ClassBridge
 
-Windows Chrome / Edge 上的课堂实时中英翻译网页。无需安装 npm 依赖。
+Windows Chrome / Edge 上的中英课堂实时字幕与音视频精听网页。深色工作台采用左侧播放器、右侧逐句双语字幕布局。无需安装 npm 依赖。
 
-## 独立网页部署
+- 独立网页：https://xiongzihan020110.github.io/-/
+- 源码：https://github.com/xiongzihan020110/-
 
-源码仓库：https://github.com/xiongzihan020110/- 。`.github/workflows/pages.yml` 在 main 分支更新后自动检查、测试并发布 `dist/` 到 GitHub Pages。首次需要在仓库 Settings → Pages 将 Source 选择为 GitHub Actions。
+## 实时课堂
 
-默认项目路径为 `https://xiongzihan020110.github.io/-/`，**是否已上线以 GitHub Actions 的实际部署结果为准**。模型和课堂记录按网站域名分别缓存；从旧网址迁移到 GitHub Pages 后需要重新下载模型，课堂记录请先导出。
+1. 打开右上角“设置”，选择中译英 / 英译中、在线 / 离线翻译。
+2. 本地识别需先“准备当前模式模型”。Whisper tiny 负责语音识别，OPUS-MT 负责离线翻译。每个翻译方向的模型分别缓存。
+3. 本地分段可选最长 2.8 / 4 / 8 秒，遇到短暂停顿会提前提交。较短分段减少等待，也可能影响语境与识别质量。
+4. 可选“极速在线 · 浏览器语音服务”，仅用于在线模式下的系统默认麦克风；临时原文持续更新，确认后翻译。此模式会把麦克风音频交给浏览器的识别服务，不是由翻译 API 负责识别，兼容性与网络可用性以实际浏览器为准。
+5. 点击“开始听课”，允许音频权限。可采集现场麦克风或浏览器提供的电脑共享音频。电脑音频需在共享时勾选音频；能采集哪些应用取决于浏览器。
 
-## 本地启动
+识别与翻译使用独立 Worker，在线翻译最多并行两个请求，不再等待当前译文结束才识别下一段。积压时会暂停收音，保留已收集的原文和已保存录音。该实现是低延迟分段字幕，**不是零延迟、可保证时延的专业同声传译**；真实延迟取决于电脑、识别引擎、网络和翻译服务。实时麦克风表现需在自己的设备测试。
 
-安装 Node.js 后，在此目录执行 `node server.mjs`，访问 http://localhost:4173 。
-请勿双击 HTML 文件，麦克风、模块与离线缓存需要 localhost 或 HTTPS。
+## 保留录音与课堂库
 
-## 首次使用
+- 默认开启“保留录音至本地课堂库”。以 16kHz 单声道 PCM 录音分块保存到 IndexedDB，约 115MB / 小时，不上传到仓库或服务器。
+- 暂停时保存尾部数据。新课堂保留旧课堂；右上角“课堂库”可重新打开字幕及原声。
+- 可以导出原始录音 WAV、双语 TXT、SRT；导入的文件以原格式导出。
+- 浏览器空间不足会提示。录音尚在进行时请勿关闭 / 刷新页面；意外中断可能丢失尚未写入的最后一块音频。私密浏览、清理站点数据或浏览器自动回收存储可能导致记录丢失，请定期导出。
+- 从旧网址迁移到新域名后，模型和课堂记录不会自动迁移。旧记录请先导出。
 
-1. 选择在线 / 离线模式、英译中 / 中译英。
-2. 点击“准备当前模式模型”。在线模式也需要本地语音识别模型。
-3. 等待模型加载及预热成功。模型由 Hugging Face 下载，运行库由 jsDelivr 加载；网络无法访问时会提示失败。
-4. 点击“开始听课”，允许麦克风权限。音频按停顿或约 8 秒分段；语音识别和翻译会有计算延迟。
-5. 暂停后导出双语 TXT / SRT。当前课堂自动保存在该浏览器的 localStorage，不跨设备同步。
+## 音视频导入与精听
 
-离线模式使用 Whisper tiny + 当前方向 OPUS-MT 量化模型，通过 Transformers.js / ONNX WASM 在 Web Worker 运行。切换翻译方向需要分别下载对应模型。网页外壳、JS/WASM 运行库以及模型使用浏览器缓存；准备完成后必须在目标浏览器断网验证一次。缓存可能被系统或用户清除，私密浏览不适合保存模型。
+右侧“＋ 导入”或空白播放器中的导入按钮，可选择 MP3 / WAV / M4A / MP4 / WebM / Ogg 等**浏览器能够解码**的音视频文件。不是所有容器和编码都兼容；不兼容时请先转换为 WAV、MP3 或含 AAC 音轨的 MP4。
 
-在线模式不上传音频，仅将识别文字发送到你选择的 API。点击“在线翻译 API 设置”配置：
+原文件先保存到本机课堂库。100MB 以内且不超过 15 分钟的媒体优先在本机解码并分块处理；较大媒体或无法直接解码的可播放容器采用按播放速度的流式读取，限制解码内存占用。单个导入文件上限 1GB，也需有足够的浏览器配额。流式读取的时间戳为近似值。可取消后续处理，保留原文件和已完成字幕。
 
-| 服务 | 配置方式 |
-| --- | --- |
-| MyMemory | 默认免费服务，无需密钥，有每日额度限制 |
-| DeepSeek | 预设地址和模型，可自行修改，填写自己的 API Key |
-| 硅基流动 | 预设地址，填写控制台中的模型 ID 和 API Key |
-| OpenAI 兼容 / 自建代理 | 填写 Base URL、模型名称及可选密钥；使用 Chat Completions 协议 |
-| LibreTranslate | 填写服务地址及可选密钥 |
+- 点击右侧任意字幕或“逐句精听”，定位到原声并高亮当前句。
+- 视频可边看边听；右侧字幕随播放位置更新，底部显示当前双语字幕。
+- 上一句 / 下一句、单句循环、0.65×–1.5× 变速、字幕搜索、字号调整、隐藏译文与进度拖动。
+- Whisper 片段时间戳用于定位；同片段内的多句文本按长度分配时间并标记为估算。不是逐词强制对齐，起止点可能需要在播放器中微调。
+- 关闭单句循环时，导入文件连续播放；现场录音按所选句的原声片段播放。
 
-兼容接口地址自动补充 `/chat/completions`；LibreTranslate 自动补充 `/translate`。可以直接填写完整路径，不会重复补充。支持 HTTPS 与本机 HTTP 服务。网页会拒绝 URL 中的账号、密码和查询参数，密钥仅放在请求头或 LibreTranslate JSON 请求体。
+文件与本地模式的语音不离开当前设备。在线翻译仅发送识别后的文字到所选 API；极速在线麦克风模式另外会发送音频给浏览器语音服务。
 
-每个服务分别保存地址、模型、超时设置。**密钥仅保留在当前页面内存，不保存到 localStorage、sessionStorage、源码或 GitHub。刷新后需重新填写。**“测试连接与翻译”会发送一句固定英文到当前填写的服务，可能产生少量 API 费用；该按钮不修改已保存的配置。
+## 在线翻译 API
 
-GitHub Pages 为静态网站。浏览器直连服务必须允许跨域（CORS）；无法通过前端代码绕过 CORS。长期使用或多人分享请自行部署兼容代理，将正式密钥存储在后端。不要把正式密钥提交到仓库。项目不内置任何付费 API 密钥，也未验证你个人服务账号的额度或模型权限。
+“设置 → 在线翻译 API 设置”支持 MyMemory、DeepSeek、硅基流动、OpenAI 兼容 Chat Completions 接口 / 自建代理，以及 LibreTranslate。
 
-翻译失败保留原文并提供重试，不自动切换服务。MyMemory 文档：https://mymemory.translated.net/doc/spec.php 、 https://mymemory.translated.net/doc/usagelimits.php 。兼容协议参考：https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create 、 https://api-docs.deepseek.com/ 。LibreTranslate 协议参考：https://docs.libretranslate.com/api/operations/translate/ 。
+每个服务可分别保存 Base URL、模型与超时。兼容接口自动补充 `/chat/completions`，LibreTranslate 自动补充 `/translate`；可填写完整接口地址。密钥只留在当前页面内存，刷新即清除，不写入 localStorage、源码、GitHub 或课堂库。“测试连接与翻译”会向当前地址发送一句示例文字，可能产生少量 API 费用。
 
-电脑音频使用 getDisplayMedia，需要在共享窗口选择带音频的标签页 / 屏幕，并勾选共享音频。浏览器不提供音频轨道时会明确提示；不保证所有应用窗口均可采集。共享包含视频轨道是浏览器接口要求，应用只读取音频，视频不显示、不存储、不上传。
+GitHub Pages 是静态托管。浏览器直连接口需要服务商允许跨域（CORS），前端无法绕过。长期使用请自行搭建兼容代理，并把正式密钥保存在后端。MyMemory 存在免费额度限制。程序未内置任何付费密钥，需自行核实服务商账号、模型权限、费用和额度。翻译失败保留原文，不自动切换服务。
 
-## 边界
+## 本地运行与部署
 
-- 目前是分段实时字幕，非逐字流式字幕；Whisper tiny 对远场、噪声、口音和专业术语可能不准确。
-- 同时处理一个识别 / 翻译任务；积压 5 段自动暂停收音并处理剩余队列。
-- 暂停保留已收集的段落继续处理。原始音频只留在内存，任务结束即释放，不提供录音回放。
-- 仅保留当前课堂记录，开始新课堂前需导出；刷新时未完成的音频无法恢复。
-- 未加入说话人区分或术语表；付费服务需用户自行配置账号和密钥。
-- 首次交付需要用户在自己的设备上验证麦克风权限、模型完整下载和实际课堂延迟。
+安装 Node.js 22 后：
 
-## 检查
+```text
+node server.mjs
+```
 
-`node --test tests/*.test.mjs` 验证 UTF-8 API 分段、SRT 时间戳、语音分段、重采样、多 API 请求协议、地址校验、错误处理与密钥脱敏。付费服务测试使用模拟响应，不调用真实付费接口。
-`node --check dist/app.js` 检查入口语法。
+访问 http://localhost:4173 。请勿双击 HTML，麦克风、模块和离线缓存需要 localhost 或 HTTPS。
 
-界面的“使用指南 → 查看示例字幕”为显式示例，不参与导出，不冒充真实识别结果。
+`.github/workflows/pages.yml` 在 main 更新后检查语法、运行测试并发布 dist 到 GitHub Pages。首次在仓库 Settings → Pages 中选择 GitHub Actions。上线状态以 Actions 的部署结果为准。旧页面可能需要刷新以加载新离线缓存。
 
-“使用英文示例测试”会真实运行本地识别和当前模式翻译，不使用麦克风。示例来自 Transformers.js 官方文档使用的公开 JFK 音频：https://huggingface.co/datasets/Xenova/transformers.js-docs/resolve/main/jfk.wav 。测试结果不加入课堂导出。
+## 验证
+
+```text
+node scripts/check.mjs
+node --test tests/*.test.mjs
+```
+
+测试覆盖 API 协议与密钥脱敏、WAV 编码、跨录音块精听、句子时间分配、低延迟分段和连续采样完整性。
+
+浏览器验证使用公开示例音频、合成录音及包含示例语音的测试视频，覆盖 IndexedDB 保存、音视频导入、精听回放、课堂恢复和深色界面。没有使用用户课堂录音，也没有用真实付费密钥进行接口测试。
+
+示例音频来源：https://huggingface.co/datasets/Xenova/transformers.js-docs/resolve/main/jfk.wav 。
+
+API 文档：https://mymemory.translated.net/doc/spec.php 、https://api-docs.deepseek.com/ 、https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create 、https://docs.libretranslate.com/api/operations/translate/ 。
