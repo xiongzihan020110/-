@@ -15,3 +15,5 @@ let current=null;
 export const currentVideoLink=()=>current;
 export function openVideoLink(link){current=link;const frame=document.getElementById('networkPlayer');frame.src=link.provider==='youtube'?`${link.embed}&origin=${encodeURIComponent(location.origin)}&start=${link.start}`:link.embed;frame.hidden=false;document.getElementById('videoStage').classList.add('network-active');document.getElementById('stagePlaceholder').hidden=true;}
 export function closeVideoLink(){current=null;const frame=document.getElementById('networkPlayer');frame.src='about:blank';frame.hidden=true;document.getElementById('videoStage').classList.remove('network-active');}
+
+export function requestNetworkPlayback(){if(!current)return;const frame=document.getElementById('networkPlayer'),url=new URL(frame.src);url.searchParams.set('autoplay','1');frame.src=url.href;}

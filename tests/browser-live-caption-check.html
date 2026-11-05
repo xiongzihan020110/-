@@ -1,0 +1,21 @@
+<!doctype html><meta charset="utf-8"><title>实时字幕链路验证</title><style>body{background:#15202a;color:#d5e6f1;font:14px sans-serif}button{padding:12px;margin:8px}iframe{width:100%;height:700px;border:1px solid #456}pre{white-space:pre-wrap}</style><button id="run">运行真实语音流与字幕同步验证</button><pre id="result">等待运行：此测试使用公开示例音频生成媒体流，不访问麦克风或屏幕。</pre><iframe id="app" src="../dist/index.html?qa=capture"></iframe><script type="module">
+const frame=document.getElementById('app'),result=document.getElementById('result');
+document.getElementById('run').onclick=async()=>{
+let ctx,watch,timeout,frames=0,recognized=0;
+try{
+  const api=frame.contentWindow.classbridgeCaptureQA;if(!api)throw Error('请先刷新测试页，以加载最新本地测试入口');
+  api.link('https://www.youtube.com/watch?v=M7lc1UVf-VE');
+  ctx=new AudioContext({sampleRate:16000});const buffer=await ctx.decodeAudioData(await(await fetch('../dist/sample.wav')).arrayBuffer()),destination=ctx.createMediaStreamDestination(),source=ctx.createBufferSource();source.buffer=buffer;source.connect(destination);await ctx.resume();
+  result.textContent='正在准备本地模型…';await api.start(destination.stream);if(!api.status().active)throw Error('真实媒体流未进入收音流程');
+  api.paint('This is an interim sentence.','这是一句临时字幕。');let state=api.status();if(state.overlay!==state.sidebar||state.overlayTranslation!==state.sidebarTranslation)throw Error('临时字幕的画面和侧栏不一致');if(!state.captionVisible||!state.link)throw Error('外链模式仍隐藏了画面字幕');api.paint('');
+  result.textContent='正在将真实语音媒体流送入音频工作线程、识别模型和离线翻译模型…';
+  await new Promise((resolve,reject)=>{
+    timeout=setTimeout(()=>reject(Error('语音链路测试超过 120 秒')),120000);
+    watch=setInterval(()=>{const s=api.status();if(s.overlay){frames++;if(s.overlay!==s.sidebar||s.overlayTranslation!==s.sidebarTranslation){reject(Error('实时字幕与侧栏内容不一致'));return;}if(!s.captionVisible){reject(Error('外链字幕被隐藏'));return;}}recognized=Math.max(recognized,s.rows);if(!s.active&&s.pending===0&&s.rows>0)resolve();result.textContent=`实际识别 ${s.rows} 句，待处理 ${s.pending}，已比对 ${frames} 帧。\n画面：${s.overlay}\n侧栏：${s.sidebar}\n译文：${s.overlayTranslation}`;},150);
+    source.onended=()=>void api.stop();source.start();
+  });
+  result.textContent=`PASS · 真实语音流识别 ${recognized} 句，${frames} 帧的原文与译文一致；外链画面字幕可见，临时字幕与正式字幕均通过验证。`;
+}catch(e){result.textContent='FAIL · '+e.message;}
+finally{clearInterval(watch);clearTimeout(timeout);await frame.contentWindow.classbridgeCaptureQA?.stop();await ctx?.close().catch(()=>{});}
+};
+</script>
