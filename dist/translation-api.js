@@ -1,6 +1,8 @@
 import { splitForApi } from './core.js';
+import {translateNative} from './native-translation.js';
 
 export const PROVIDERS = {
+  native: { label: 'Chrome 内置翻译 · 免费免 Key', protocol: 'native', baseUrl: '', model: '' },
   google: { label: 'Google 翻译 · 官方 API', protocol: 'google', baseUrl: 'https://translation.googleapis.com/language/translate/v2', model: '' },
   openai: { label: 'OpenAI · 填写密钥即可', protocol: 'chat', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4.1-mini' },
   mymemory: { label: 'MyMemory · 免费额度', protocol: 'mymemory', baseUrl: 'https://api.mymemory.translated.net/get', model: '' },
@@ -20,6 +22,7 @@ export function normalizeConfig(input = {}) {
 
 export function endpointFor(input) {
   const config = normalizeConfig(input); const protocol = PROVIDERS[config.provider].protocol;
+  if (protocol === 'native') return null;
   if (protocol === 'mymemory') return PROVIDERS.mymemory.baseUrl;
   if (protocol === 'google') return PROVIDERS.google.baseUrl;
   let url; try { url = new URL(config.baseUrl); } catch { throw new Error('请填写完整的 API 地址，例如 https://your-service.example/v1'); }
@@ -70,6 +73,7 @@ async function requestJson(url, options, config, key, fetcher, attempt = 0) {
 export async function translateOnline(text, direction, input, key = '', fetcher = fetch) {
   if (!['en-zh', 'zh-en'].includes(direction)) throw new Error('不支持的翻译方向');
   const config = validateConfig(input); const protocol = PROVIDERS[config.provider].protocol;
+  if (protocol === 'native') return translateNative(text,direction);
   const endpoint = endpointFor(config);
   if (protocol === 'mymemory') {
     const translated = [];

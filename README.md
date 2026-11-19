@@ -103,3 +103,10 @@ API 文档：https://mymemory.translated.net/doc/spec.php 、https://api-docs.de
 在“设置 → 在线翻译 API 设置”选择“Google 翻译 · 官方 API”，填写 Google Cloud API Key 并点击“测试并使用”。地址和语言代码自动配置，无需填写模型。需在对应项目启用 Cloud Translation API 和计费；免费额度按 Google 当前规则计算。
 
 密钥仅存于页面内存，通过 X-goog-api-key 请求头直接发送至 translation.googleapis.com。可在 Google Cloud 限制密钥仅访问 Cloud Translation API，并允许网站来源 https://xiongzihan020110.github.io/*。刷新后需重新填入密钥。该选项仅翻译文字，不会更改语音识别引擎。
+
+
+### 免 Key 听课（v0.4.5）
+
+首次更新默认选择 Chrome 内置翻译，并在支持的浏览器中选择浏览器麦克风语音识别。点击顶部“免 Key 听课”准备中英语言包，再点击“开始听课”允许麦克风。无需 API Key 或信用卡。文字由浏览器本地模型翻译；语音识别依赖浏览器语音服务，通常需联网并会上传音频。此模式只支持默认麦克风，不直接读取哔站/YouTube 音频。
+
+语言包按方向准备，切换中英文方向后可再次点击按钮。不支持、下载失败时明确报错，不自动调用收费 API。新启动器会等当前版本的离线缓存接管后再加载程序，防止新旧模块混用。
