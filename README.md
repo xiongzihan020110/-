@@ -96,3 +96,10 @@ API 文档：https://mymemory.translated.net/doc/spec.php 、https://api-docs.de
 回归测试包含：提供公开样本生成的真实 MediaStream，经过同一 AudioWorklet → 本地识别 → 离线翻译链路；逐帧比对画面与侧栏的原文及译文，并验证外链模式的字幕层可见。这不是对第三方视频音轨的实际屏幕共享授权测试。第三方平台是否播放和 Chrome 是否授予音频权限，仍需在真实使用环境确认。
 
 本地开发可运行 qa=capture 测试入口，入口只对 localhost / 127.0.0.1 生效，部署到 GitHub Pages 不开放媒体流注入。测试页面保存在 tests/browser-live-caption-check.html。
+
+
+### Google 官方文字翻译（v0.4.4）
+
+在“设置 → 在线翻译 API 设置”选择“Google 翻译 · 官方 API”，填写 Google Cloud API Key 并点击“测试并使用”。地址和语言代码自动配置，无需填写模型。需在对应项目启用 Cloud Translation API 和计费；免费额度按 Google 当前规则计算。
+
+密钥仅存于页面内存，通过 X-goog-api-key 请求头直接发送至 translation.googleapis.com。可在 Google Cloud 限制密钥仅访问 Cloud Translation API，并允许网站来源 https://xiongzihan020110.github.io/*。刷新后需重新填入密钥。该选项仅翻译文字，不会更改语音识别引擎。

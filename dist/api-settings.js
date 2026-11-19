@@ -15,9 +15,11 @@ export function initializeApiSettings(onChange, notify) {
     selector.value = id; $('apiBaseUrl').value = config.baseUrl; $('apiModel').value = config.model; $('apiTimeout').value = config.timeout; $('apiKey').value = keys.get(id) || '';
     const protocol = PROVIDERS[id].protocol;
     $('apiAdvanced').open = ['compatible','libretranslate','siliconflow'].includes(id); $('apiAdvanced').hidden = protocol === 'mymemory';
-    $('apiModelField').hidden = protocol !== 'chat'; $('apiUrlField').hidden = protocol === 'mymemory'; $('apiKeyField').hidden = protocol === 'mymemory';
+    $('apiModelField').hidden = protocol !== 'chat'; $('apiUrlField').hidden = ['mymemory','google'].includes(protocol); $('apiKeyField').hidden = protocol === 'mymemory';
     $('apiResult').textContent = protocol === 'mymemory' ? '默认免费服务，无需密钥。存在每日额度限制。' : '填写后可发送一句示例文字，检查连接和翻译结果。';
-    $('apiKeyState').textContent = keys.has(id) ? '本页已填写密钥，刷新后清除。' : '未填写密钥；无鉴权的自建服务可留空。';
+    if(protocol==='google')$('apiResult').textContent='谷歌官方文字翻译：只填 Google Cloud API Key 即可；需启用 Cloud Translation API 和计费，费用与免费额度按谷歌规则计算。它不负责语音识别。';
+    $('apiKey').placeholder=protocol==='google'?'填写 Google Cloud API Key（不是 Gemini Key）':'填写你自己的密钥，或留空使用无鉴权代理';
+    $('apiKeyState').textContent = keys.has(id) ? '本页已填写密钥，刷新后清除。' : (protocol==='google'?'需要对应 Google Cloud 项目的 API Key。':'未填写密钥；无鉴权的自建服务可留空。');
   }
   const draft = () => validateConfig({ provider:selector.value, baseUrl:$('apiBaseUrl').value, model:$('apiModel').value, timeout:$('apiTimeout').value });
   $('apiSettings').onclick = () => { load(selected); $('apiDialog').showModal(); };
@@ -29,7 +31,7 @@ export function initializeApiSettings(onChange, notify) {
     $('apiSave').disabled=true;
     try {
       const config = draft(); const key = $('apiKey').value.trim();
-      if(['openai','deepseek','siliconflow'].includes(config.provider)&&!key)throw new Error('请先填写该服务商的 API Key。ChatGPT 登录不会自动提供密钥。');
+      if(['google','openai','deepseek','siliconflow'].includes(config.provider)&&!key)throw new Error('请先填写所选服务商的 API Key。');
       $('apiResult').textContent='正在测试连接与翻译…';
       await translateOnline('Hello.', 'en-zh', config, key);
       profiles[config.provider] = config; selected = config.provider;

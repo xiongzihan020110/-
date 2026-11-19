@@ -1,4 +1,4 @@
-const SHELL = 'classbridge-shell-v20';
+const SHELL = 'classbridge-shell-v21';
 const RUNTIME = 'classbridge-runtime-v1';
 const FILES = ['./', './index.html', './style.css', './app.js', './core.js', './speech-core.js', './caption-state.js', './capture-audio.js', './cloud-speech.js', './file-paths.js', './subtitles.js', './video-links.js', './media-core.js', './media-store.js', './media-library.js', './file-import.js', './browser-speech.js', './translation-api.js', './api-settings.js', './inference-worker.js', './audio-worklet.js', './manifest.webmanifest', './icon.svg', './sample.wav'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(SHELL).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); });
