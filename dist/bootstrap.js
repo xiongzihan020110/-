@@ -1,6 +1,6 @@
 // Load the application only after the service worker for this release controls
 // the document. This prevents new HTML from importing stale cached modules.
-const workerUrl=new URL('./sw.js?v=0.4.5',location.href).href;
+const workerUrl=new URL('./sw.js?v=0.5.0-final4',location.href).href;
 try{
  if('serviceWorker' in navigator&&navigator.serviceWorker.controller?.scriptURL!==workerUrl){
   document.getElementById('notice').textContent='正在更新程序，请稍候…';
@@ -11,6 +11,6 @@ try{
    navigator.serviceWorker.addEventListener('controllerchange',changed);changed();
   });
  }
- await import('./app.js');
- if(document.getElementById('notice').textContent==='正在更新程序，请稍候…')document.getElementById('notice').textContent='程序已更新。点击“免 Key 听课”准备语言包，然后开始听课。';
+ await import('./app.js?v=0.5.0-final4');
+ if(document.getElementById('notice').textContent==='正在更新程序，请稍候…')document.getElementById('notice').textContent='程序已就绪。实时翻译请点击“开始翻译”；精听请导入文件或粘贴视频链接。';
 }catch(e){document.getElementById('notice').textContent=`程序未启动：${e.message}。请联网后刷新；课堂记录不会被清除。`;}
