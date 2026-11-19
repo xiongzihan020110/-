@@ -1,0 +1,33 @@
+<!doctype html><meta charset="utf-8"><title>语音识别内容对照测试</title>
+<style>body{font:16px sans-serif;max-width:1200px;margin:30px}pre{white-space:pre-wrap}button{padding:12px}</style>
+<h1>语音识别内容对照测试（不使用麦克风）</h1><button id="run">运行实际模型对照</button><pre id="result">等待运行</pre>
+<script type="module">
+import {Segmenter,resample} from '../dist/core.js';
+const result=document.querySelector('#result');
+document.querySelector('#run').onclick=async()=>{
+ const worker=new Worker('../dist/inference-worker.js',{type:'module'});let id=0;const pending=new Map();
+ worker.onmessage=({data})=>{if(data.type==='progress')return;const p=pending.get(data.id);if(!p)return;pending.delete(data.id);data.type==='error'?p.reject(Error(data.error)):p.resolve(data.result);};
+ const call=(action,data={})=>new Promise((resolve,reject)=>{const i=++id;pending.set(i,{resolve,reject});worker.postMessage({id:i,action,...data});});
+ const log=text=>{result.textContent+='\n'+text;};
+ const ctx=new AudioContext({sampleRate:16000});
+ try{
+ result.textContent='正在加载实际 Whisper 模型…';await call('init',{direction:'en-zh',offline:false,download:true,role:'asr'});
+ const buffer=await ctx.decodeAudioData(await(await fetch('../dist/sample.wav')).arrayBuffer());const samples=resample(buffer.getChannelData(0),buffer.sampleRate);
+ log('标准原文：And so, my fellow Americans: ask not what your country can do for you — ask what you can do for your country.');
+ for(const seconds of [1.8,6,12]){let parts=[];const segmenter=new Segmenter(s=>parts.push(s),16000,{maxSeconds:seconds,pauseSeconds:seconds===1.8?.3:.65,minSeconds:seconds===1.8?.65:2});for(let i=0;i<samples.length;i+=2048)segmenter.push(samples.slice(i,i+2048));segmenter.flush();const texts=[];let elapsed=performance.now();for(const p of parts){const out=await call('transcribe',{audio:p.audio,direction:'en-zh',timestamps:false});texts.push(out.text);}log(JSON.stringify({seconds,parts:parts.length,text:texts.join(' '),inferenceSeconds:(performance.now()-elapsed)/1000}));}
+ for(const amplitude of [0,.003]){const noise=new Float32Array(16000*4);let seed=13;for(let i=0;i<noise.length;i++){seed=(seed*1664525+1013904223)>>>0;noise[i]=(seed/4294967296*2-1)*amplitude;}const out=await call('transcribe',{audio:noise,direction:'en-zh',timestamps:false});log(JSON.stringify({noiseAmplitude:amplitude,text:out.text}));}
+
+ const quiet=samples.map(x=>x*.1);log(JSON.stringify({case:'quiet speech at 10% amplitude',...(await call('transcribe',{audio:quiet,direction:'en-zh',timestamps:false}))}));
+ // Exercise actual browser resampling and capture, not just the model input.
+ const captureCtx=new AudioContext({sampleRate:48000});await captureCtx.audioWorklet.addModule('../dist/audio-worklet.js');await captureCtx.resume();
+ const capture=new AudioWorkletNode(captureCtx,'classbridge-capture'),captured=[];let flushed;
+ capture.port.onmessage=({data})=>{if(data.flushed){flushed?.();return;}captured.push(resample(data,captureCtx.sampleRate));};
+ const source=captureCtx.createBufferSource();source.buffer=buffer;source.connect(capture);capture.connect(captureCtx.destination);
+ await new Promise(resolve=>{source.onended=()=>{flushed=resolve;capture.port.postMessage('flush');};source.start();});
+ const joined=new Float32Array(captured.reduce((n,x)=>n+x.length,0));let offset=0;for(const part of captured){joined.set(part,offset);offset+=part.length;}
+ log(JSON.stringify({case:'actual 48kHz AudioContext → Worklet → 16kHz recognition',capturedSeconds:joined.length/16000,...(await call('transcribe',{audio:joined,direction:'en-zh',timestamps:false}))}));await captureCtx.close();
+ try{const clip=await ctx.decodeAudioData(await(await fetch('https://huggingface.co/datasets/Narsil/asr_dummy/resolve/main/i-know-kung-fu.mp3')).arrayBuffer());log(JSON.stringify({case:'independent public English clip, expected phrase I know kung fu',...(await call('transcribe',{audio:resample(clip.getChannelData(0),clip.sampleRate),direction:'en-zh',timestamps:false}))}));}catch(e){log('Independent fixture unavailable: '+e.message);}
+ log('DONE');
+ }catch(e){log('FAIL '+e.message);}finally{worker.terminate();await ctx.close();}
+};
+</script>

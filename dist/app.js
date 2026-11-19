@@ -29,7 +29,7 @@ function save() { const data={id:sessionId,sessionId,createdAt,updatedAt:Date.no
 function currentKey() { return `${$('mode').value}:${$('direction').value}`; }
 function controls() {
   const busy = initializing || preparing; const working=draining||translationRunning>0||translationQueue.length>0; const locked = active || busy || working || importing||stopping;
-  for (const id of ['onlineTab','offlineTab','direction','source','device','prepare','newSession','demo','testAudio','apiSettings','engine','latency','keepRecording','importFile','loadSession','savedSessions','previewTranslation','loadVideoLink','recognizeLink','importSubtitleButton','fastRealtime','localSpeedTest','saveCloudConfig','clearCloudKey','cloudUrl','cloudModel','cloudKey','connectExternalAudio','loadAndTranslateLink']) $(id).disabled = locked;
+  for (const id of ['onlineTab','offlineTab','direction','source','device','prepare','newSession','demo','testAudio','apiSettings','engine','latency','keepRecording','importFile','loadSession','savedSessions','previewTranslation','loadVideoLink','recognizeLink','importSubtitleButton','fastRealtime','localSpeedTest','saveCloudConfig','clearCloudKey','testMicrophone','cloudUrl','cloudModel','cloudKey','connectExternalAudio','loadAndTranslateLink']) $(id).disabled = locked;
   $('start').disabled = busy || importing || (working && !active);
   $('start').textContent = busy ? '正在准备…' : active ? '■ 暂停听课' : working ? '处理剩余字幕…' : (currentVideoLink()?'连接视频音频并翻译':'● 开始听课');
   $('statusDot').classList.toggle('on', active);
@@ -113,7 +113,7 @@ async function prepare(download = true) {
   const tasks=[model('init', { direction, offline:false, download,role:'asr' })];if(offline)tasks.push(model('init',{direction,offline:true,download,role:'translation'}));await Promise.all(tasks);
   modelReady.clear(); modelReady.add(currentKey());
   $('progress').hidden = true;
-  $('modelInfo').textContent = offline ? '识别与当前方向翻译模型已加载。请断网试用一次，确认缓存完整。' : '本地语音识别已就绪。在线翻译需要联网。';
+  $('modelInfo').textContent = offline ? '当前方向的识别与翻译模型已加载。请断网试用一次，确认缓存完整。' : `本地语音识别已就绪（${direction==='en-zh'?'英语专用 tiny.en':'中文 tiny'}）。在线翻译需要联网。`;
   notify(offline ? '离线模型已准备好。可以开始听课，音频和文字均在本机处理。' : `准备完成。音频在本机识别，文字将发送至 ${apiLabel()} 翻译。`);
   if (download) navigator.storage?.persist?.().catch(() => {});
 }
@@ -138,6 +138,20 @@ $('testAudio').onclick = async () => {
 };
 async function devices() { try { const all = await navigator.mediaDevices.enumerateDevices(); const previous = $('device').value; $('device').replaceChildren(new Option('系统默认麦克风', '')); all.filter(x => x.kind === 'audioinput' && x.deviceId !== 'default').forEach((d, i) => $('device').add(new Option(d.label || `麦克风 ${i + 1}`, d.deviceId))); if ([...$('device').options].some(o => o.value === previous)) $('device').value = previous; } catch { notify('无法读取音频设备，请使用 localhost 或 HTTPS，并检查浏览器权限。', true); } }
 $('refreshDevices').onclick = devices;
+let diagnosticUrl;
+$('testMicrophone').onclick=async()=>{
+ let input,recorder;const parts=[];preparing=true;controls();stopPlayback();$('micPreview').pause();
+ try{
+  input=await navigator.mediaDevices.getUserMedia({audio:{deviceId:$('engine').value!=='browser'&&$('device').value?{exact:$('device').value}:undefined,channelCount:1,echoCancellation:true,noiseSuppression:true},video:false});
+  const label=input.getAudioTracks()[0]?.label||'系统默认设备';
+  $('micDiagnostic').textContent=`正在录制：${label}。请说一句英文，6 秒后点击下方播放核对原声。`;
+  recorder=new MediaRecorder(input);recorder.ondataavailable=e=>{if(e.data.size)parts.push(e.data);};
+  await new Promise((resolve,reject)=>{recorder.onstop=resolve;recorder.onerror=()=>reject(new Error('麦克风测试录音失败'));recorder.start();setTimeout(()=>{if(recorder.state!=='inactive')recorder.stop();},6000);});
+  if(diagnosticUrl)URL.revokeObjectURL(diagnosticUrl);diagnosticUrl=URL.createObjectURL(new Blob(parts,{type:recorder.mimeType}));$('micPreview').src=diagnosticUrl;$('micPreview').hidden=false;
+  $('micDiagnostic').textContent=`采集设备：${label}。请回听：若原声已不对，请换麦克风；若原声清楚但字幕错误，则是识别问题。此录音未上传。`;
+ }catch(e){$('micDiagnostic').textContent=`测试失败：${e.message}`;}
+ finally{if(recorder&&recorder.state!=='inactive')recorder.stop();input?.getTracks().forEach(t=>t.stop());preparing=false;controls();void devices();}
+};
 async function start(options={}) {
   if (active) { await stop(); return; }
   if (rows.some(r => r.demo)) { rows = []; elapsed = 0; render(); }
@@ -159,6 +173,7 @@ async function start(options={}) {
     if((await sessionAssets(sessionId).catch(()=>[])).some(a=>a.kind==='file'))await resetCurrent('实时课堂');
     if (runEngine==='local'&&!modelReady.has(currentKey())){if(currentVideoLink())externalState('preparing','正在准备识别模型。首次下载期间请先暂停视频。');await prepare(navigator.onLine);}
     if (stream.getAudioTracks().every(t => t.readyState !== 'live')) throw new Error('音频共享已结束，请重新开始');
+    stopPlayback();$('micPreview').pause();
     runDirection = $('direction').value; runMode = $('mode').value;
     context = new AudioContext({ sampleRate: 16000 }); await context.resume();
     await context.audioWorklet.addModule('./audio-worklet.js');
@@ -166,13 +181,13 @@ async function start(options={}) {
     offset = elapsed;
     await beginRecording(sessionId,offset,$('keepRecording').checked,message=>notify(message,true));
     const maxSeconds=Number($('latency').value);
-    segmenter = new Segmenter(segment => { queue.push({ ...segment, start: segment.start + offset, end: segment.end + offset, direction: runDirection, mode: runMode,engine:runEngine, apiConfig:runMode === 'online' ? runApiConfig : undefined }); if (queue.length >= 5 && active) { notify('电脑处理速度暂时跟不上讲话，已暂停收音。录音与已收集的语音会保留，请等处理完成后继续。', true); stop(); } void drain(); },16000,{maxSeconds,pauseSeconds:maxSeconds<=3?.3:.5,minSeconds:.65});
+    segmenter = new Segmenter(segment => { queue.push({ ...segment, start: segment.start + offset, end: segment.end + offset, direction: runDirection, mode: runMode,engine:runEngine, apiConfig:runMode === 'online' ? runApiConfig : undefined }); if (queue.length >= 5 && active) { notify('电脑处理速度暂时跟不上讲话，已暂停收音。录音与已收集的语音会保留，请等处理完成后继续。', true); stop(); } void drain(); },16000,{maxSeconds,pauseSeconds:.7,minSeconds:2});
     capture.port.onmessage = ({ data }) => {if(data.flushed){flushCapture?.();flushCapture=null;return;} if (!active) return;const samples=resample(data,context.sampleRate);recordSamples(samples);let rms;if(runEngine==='browser'){let sum=0;for(const x of samples)sum+=x*x;rms=Math.sqrt(sum/samples.length);}else rms=segmenter.push(samples); $('meter').style.width = `${Math.min(100, rms * 1000)}%`;lastCaptureSignal=performance.now();if(rms>.003){lastAudioSignal=lastCaptureSignal;if(currentVideoLink()&&(externalPhase==='silent'||externalPhase==='listening'))externalState('receiving','已收到视频音频，正在识别；画面与右侧字幕将同时更新。');} };
     const source = context.createMediaStreamSource(new MediaStream(stream.getAudioTracks())); source.connect(capture); capture.connect(context.destination);
     stream.getAudioTracks().forEach(track => { track.onended = () => { if (active) { notify('音频输入已断开，已暂停收音。', true); stop(); } }; });
     active = true; startClock = performance.now();lastAudioSignal=startClock;lastCaptureSignal=startClock;if(currentVideoLink())externalState('listening','音频已连接。请播放视频；音量指示有变化后开始识别。');
     if(runEngine==='browser')speech=browserSpeech({language:runDirection==='en-zh'?'en-US':'zh-CN',clock:()=>active?offset+(performance.now()-startClock)/1000:elapsed,onInterim:updateLiveDraft,onFinal:result=>{updateLiveDraft('');addRecognized({text:result.text},{...result,direction:runDirection,mode:runMode,engine:'browser',apiConfig:runApiConfig,approximate:true,unconfirmed:!!result.provisional});},onError:e=>{notify(e.message,true);void stop();}});
-    $('audioStatus').textContent = liveSource === 'mic' ? '正在聆听麦克风' : '正在聆听电脑音频';
+    $('audioStatus').textContent = liveSource === 'mic' ? `麦克风：${stream.getAudioTracks()[0]?.label||'系统默认设备'} · ${runDirection==='en-zh'?'英语识别':'中文识别'}` : '正在聆听电脑音频';
     notify(runEngine==='cloud'?`正在使用云端语音 API（${new URL(cloudConfig().url).host}），音频片段会上传，识别与文字翻译均可能产生费用。`:runEngine==='browser'?'正在使用浏览器在线语音服务，音频会发送给浏览器的识别服务。临时原文持续更新，确认后生成译文。':`正在本机收音与识别。短暂停顿或最多 ${maxSeconds} 秒即提交一段，翻译与下一段识别并行。`);
     void devices();save(); render();
   } catch (e) {
@@ -201,13 +216,14 @@ async function drain() {
       try {
         const started=performance.now();
         const output = job.engine==='cloud'?await recognizeCloud(job.audio,job.direction):await model('transcribe', { audio: job.audio, direction: job.direction,timestamps:false }, [job.audio.buffer]);
-        lastLatency=(performance.now()-started)/1000;if(active&&job.engine!=='cloud'&&segmenter){const floor=Number($('latency').value);segmenter.maxSeconds=Math.min(8,Math.max(floor,lastLatency*1.25));}addRecognized(output,job);
+        lastLatency=(performance.now()-started)/1000;if(active&&job.engine!=='cloud'&&segmenter){const floor=Number($('latency').value);segmenter.maxSeconds=Math.min(16,Math.max(floor,lastLatency*1.25));}addRecognized(output,job);
       } catch (e) { rows.push({id:++sequence,start:job.start,end:job.end,direction:job.direction,mode:job.mode,original:'[这一段语音识别失败]',unrecognized:true,state:'failed',error:e.message});notify(`处理失败：${e.message}。已保存的录音可以继续精听。`, true); }
       finally { save(); render(); }
     }
   } finally { draining = false; controls(); render(); }
 }
 function addRecognized(output,job){
+  if(output.skipped==='no-speech')return;
   const text=(output.text||'').trim();if(!text||/^\[.*\]$/.test(text)){rows.push({id:++sequence,start:job.start,end:job.end,direction:job.direction,mode:job.mode,original:'[这一段未识别出文字，请回听录音]',unrecognized:true,state:'failed',error:'请检查输入音量或换用语音识别引擎'});save();render();notify('有语音片段未识别出文字，已标记时间，可回听录音。',true);return;}
   const chunks=output.chunks?.filter(c=>c.text?.trim())||[];const pieces=chunks.length?chunks.flatMap(c=>{const from=job.start+Math.max(0,Number(c.timestamp?.[0])||0),to=Math.min(job.end,job.start+(Number(c.timestamp?.[1])||job.end-job.start));return sentenceRanges(c.text,from,Math.max(from+.1,to)).map(r=>({...r,approximate:!!job.approximate||/[.!?。！？].+[^\s]/.test(c.text)}));}):sentenceRanges(text,job.start,job.end);
   for(const piece of pieces){const row={...piece,id:++sequence,direction:job.direction,mode:job.mode,apiConfig:job.apiConfig,mediaId:job.mediaId,unconfirmed:!!job.unconfirmed,translation:'',state:'pending'};rows.push(row);translationQueue.push(row);if(active||job.engine)selectedRowId=row.id;}save();render();pumpTranslations();if(currentVideoLink()&&active)externalState('translating','已识别原文，正在生成译文；两处字幕使用同一句内容。');
@@ -299,7 +315,7 @@ for(const [id,kind] of [['chooseImportDirectory','import'],['chooseExportDirecto
 $('resetDirectories').onclick=async()=>showDirectories(await clearDirectories());void restoreDirectories().then(showDirectories).catch(e=>{showDirectories();notify(e.message,true);});
 async function importSubtitle(file){if(!file)return;try{if(file.size>10*1024*1024)throw new Error('字幕文件超过 10MB');const parsed=parseSubtitles(await file.text(),file.name.split('.').at(-1));if(rows.length&&!confirm('导入字幕会替换当前字幕，请确认已导出需要保留的内容。继续吗？'))return;const asset=(await sessionAssets(sessionId)).find(a=>a.kind==='file');rows=parsed.map(r=>({...r,id:++sequence,mediaId:asset?.id,direction:$('direction').value,mode:$('mode').value,state:r.translation?'done':'failed',error:r.translation?undefined:'此字幕没有译文，可重试翻译'}));elapsed=Math.max(elapsed,...rows.map(r=>r.end));selectedRowId=null;save();render();await refreshLibrary();notify(`已导入 ${rows.length} 句字幕，可与当前媒体同步播放。`);}catch(e){notify(`字幕导入失败：${e.message}`,true);}};
 $('importSubtitleButton').onclick=async()=>{try{if(window.showOpenFilePicker)await importSubtitle(await pickMediaFile(true));else $('subtitleFile').click();}catch(e){if(e.name!=='AbortError')notify(e.message,true);}};$('subtitleFile').onchange=event=>{const file=event.target.files?.[0];event.target.value='';void importSubtitle(file);};
-$('fastRealtime').onclick=()=>{if(currentVideoLink()){notify('麦克风极速识别不能读取外链音频。请使用播放器上方“连接视频音频并实时翻译”；也可在设置中选择云端语音 API。',true);return;}if(!speechSupported()){notify('此浏览器不支持流式在线识别，可选择 1.8 秒本地分段；建议使用 Windows Chrome。',true);return;}$('engine').value='browser';$('source').value='mic';setMode('online');$('settingsDialog').showModal();notify('已选择极速在线麦克风，音频会发送到浏览器语音服务；点击“开始听课”后可持续显示临时原文和译文。');};
+$('fastRealtime').onclick=()=>{if(currentVideoLink()){notify('麦克风极速识别不能读取外链音频。请使用播放器上方“连接视频音频并实时翻译”；也可在设置中选择云端语音 API。',true);return;}if(!speechSupported()){notify('此浏览器不支持流式在线识别，可选择本地停顿分句识别；建议使用 Windows Chrome。',true);return;}$('engine').value='browser';$('source').value='mic';setMode('online');$('settingsDialog').showModal();notify('已选择极速在线麦克风，音频会发送到浏览器语音服务；点击“开始听课”后可持续显示临时原文和译文。');};
 $('linkOpen').onclick=()=>{$('linkStatus').textContent='';if(sourceLink)$('videoUrl').value=sourceLink;$('linkDialog').showModal();};$('closeLink').onclick=()=>$('linkDialog').close();
 $('loadVideoLink').onclick=async()=>{try{if(active||importing)throw new Error('请先暂停当前识别或导入');const link=parseVideoLink($('videoUrl').value);$('openOriginalVideo').href=link.url;$('openOriginalVideo').hidden=false;await resetCurrent(link.title);stopPlayback();sourceLink=link.url;openVideoLink(link);save();externalState('idle','视频已载入，尚未连接音频。点击左侧按钮连接后才会实时翻译。');$('linkDialog').close();controls();notify('视频已载入。点击播放器上方“连接视频音频并实时翻译”，选择当前标签页并勾选音频。');}catch(e){$('linkStatus').textContent=e.message;}};
 $('closeNetworkVideo').onclick=()=>{closeVideoLink();sourceLink=null;save();controls();$('linkDialog').close();};

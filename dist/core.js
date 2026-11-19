@@ -1,3 +1,4 @@
+import {speechSignal} from './speech-core.js';
 export function splitForApi(text, maxBytes = 480) {
   const encoder = new TextEncoder(); const chunks = []; let current = '';
   for (const char of text) { if (encoder.encode(current + char).length > maxBytes) { chunks.push(current); current = ''; } current += char; }
@@ -22,7 +23,7 @@ export class Segmenter {
   reset() { this.parts = []; this.length = 0; this.quiet = 0; this.voiced = 0; this.pre = []; }
   push(samples) {
     let energy = 0; for (const x of samples) energy += x * x;
-    const rms = Math.sqrt(energy / samples.length); const voice = rms > .002;
+    const rms = Math.sqrt(energy / samples.length); const voice = speechSignal(samples,this.rate).voicedSeconds >= Math.min(.04,samples.length/this.rate*.5);
     if (voice && !this.length) { this.start = Math.max(0, this.position - this.pre.reduce((n, x) => n + x.length, 0)); this.parts.push(...this.pre); this.length = this.pre.reduce((n, x) => n + x.length, 0); this.pre = []; }
     if (this.length || voice) { this.parts.push(samples); this.length += samples.length; if (voice) { this.voiced += samples.length; this.quiet = 0; } else this.quiet += samples.length; }
     else { this.pre.push(samples); while (this.pre.reduce((n, x) => n + x.length, 0) > this.rate * .3) this.pre.shift(); }
