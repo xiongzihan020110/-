@@ -1,16 +1,4 @@
-// Load the application only after the service worker for this release controls
-// the document. This prevents new HTML from importing stale cached modules.
-const workerUrl=new URL('./sw.js?v=0.5.0-final4',location.href).href;
+import {startApplication,registerOfflineCache} from './startup.js?v=0.5.1';
 try{
- if('serviceWorker' in navigator&&navigator.serviceWorker.controller?.scriptURL!==workerUrl){
-  document.getElementById('notice').textContent='正在更新程序，请稍候…';
-  await navigator.serviceWorker.register(workerUrl);
-  if(navigator.serviceWorker.controller?.scriptURL!==workerUrl)await new Promise((resolve,reject)=>{
-   const changed=()=>{if(navigator.serviceWorker.controller?.scriptURL===workerUrl){clearTimeout(timer);navigator.serviceWorker.removeEventListener('controllerchange',changed);resolve();}};
-   const timer=setTimeout(()=>{navigator.serviceWorker.removeEventListener('controllerchange',changed);reject(new Error('更新尚未完成，请联网刷新页面'));},30000);
-   navigator.serviceWorker.addEventListener('controllerchange',changed);changed();
-  });
- }
- await import('./app.js?v=0.5.0-final4');
- if(document.getElementById('notice').textContent==='正在更新程序，请稍候…')document.getElementById('notice').textContent='程序已就绪。实时翻译请点击“开始翻译”；精听请导入文件或粘贴视频链接。';
-}catch(e){document.getElementById('notice').textContent=`程序未启动：${e.message}。请联网后刷新；课堂记录不会被清除。`;}
+ await startApplication(()=>import('./app.js?v=0.5.1'),()=>registerOfflineCache(navigator.serviceWorker,new URL('./sw.js?v=0.5.1',location.href).href));
+}catch(e){document.getElementById('notice').textContent=`程序文件加载失败：${e.message}。请联网刷新页面；课堂记录不会被清除。`;}

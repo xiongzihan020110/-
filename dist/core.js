@@ -1,4 +1,4 @@
-import {speechSignal} from './speech-core.js';
+import {speechSignal} from './speech-core.js?v=0.5.1';
 export function splitForApi(text, maxBytes = 480) {
   const encoder = new TextEncoder(); const chunks = []; let current = '';
   for (const char of text) { if (encoder.encode(current + char).length > maxBytes) { chunks.push(current); current = ''; } current += char; }

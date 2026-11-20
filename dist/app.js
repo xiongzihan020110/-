@@ -1,19 +1,20 @@
-import {workflowView} from './workflow.js?v=0.5.0-final4';
-import {prepareNative,nativeAvailability,nativePrepared} from './native-translation.js?v=0.5.0-final4';
-import { Segmenter, resample, stamp, toSrt } from './core.js';
-import { translateOnline, validateConfig } from './translation-api.js?v=0.5.0-final4';
-import { getOnlineConfig, getApiKey, apiLabel, onlineHint, initializeApiSettings, useNativeProvider } from './api-settings.js?v=0.5.0-final4';
-import { saveSession, getSession, listSessions, sessionAssets } from './media-store.js';
-import { beginRecording, recordSamples, finishRecording, playRange, initializePlayer, exportRecording, keepFile, stopPlayback,previewFile } from './media-library.js';
-import { sentenceRanges } from './media-core.js';
-import { processFile } from './file-import.js';
-import { browserSpeech, speechSupported } from './browser-speech.js';
-import { restoreDirectories,directoryNames,chooseDirectory,clearDirectories,pickMediaFile,saveToDisk } from './file-paths.js';
-import { parseSubtitles } from './subtitles.js';
-import { cloudConfig,validateCloud,saveCloud,clearCloudKey,recognizeCloud } from './cloud-speech.js';
-import { parseVideoLink,openVideoLink,closeVideoLink,currentVideoLink,requestNetworkPlayback } from './video-links.js';
-import { DraftCaption,captionFrame,captionTranslation } from './caption-state.js';
-import { requestDisplayAudio } from './capture-audio.js';
+import {registerOfflineCache} from './startup.js?v=0.5.1';
+import {workflowView} from './workflow.js?v=0.5.1';
+import {prepareNative,nativeAvailability,nativePrepared} from './native-translation.js?v=0.5.1';
+import { Segmenter, resample, stamp, toSrt } from './core.js?v=0.5.1';
+import { translateOnline, validateConfig } from './translation-api.js?v=0.5.1';
+import { getOnlineConfig, getApiKey, apiLabel, onlineHint, initializeApiSettings, useNativeProvider } from './api-settings.js?v=0.5.1';
+import { saveSession, getSession, listSessions, sessionAssets } from './media-store.js?v=0.5.1';
+import { beginRecording, recordSamples, finishRecording, playRange, initializePlayer, exportRecording, keepFile, stopPlayback,previewFile } from './media-library.js?v=0.5.1';
+import { sentenceRanges } from './media-core.js?v=0.5.1';
+import { processFile } from './file-import.js?v=0.5.1';
+import { browserSpeech, speechSupported } from './browser-speech.js?v=0.5.1';
+import { restoreDirectories,directoryNames,chooseDirectory,clearDirectories,pickMediaFile,saveToDisk } from './file-paths.js?v=0.5.1';
+import { parseSubtitles } from './subtitles.js?v=0.5.1';
+import { cloudConfig,validateCloud,saveCloud,clearCloudKey,recognizeCloud } from './cloud-speech.js?v=0.5.1';
+import { parseVideoLink,openVideoLink,closeVideoLink,currentVideoLink,requestNetworkPlayback } from './video-links.js?v=0.5.1';
+import { DraftCaption,captionFrame,captionTranslation } from './caption-state.js?v=0.5.1';
+import { requestDisplayAudio } from './capture-audio.js?v=0.5.1';
 const $ = id => document.getElementById(id);
 const KEY = 'classbridge-session-v1';
 let rows = [], elapsed = 0, active = false, initializing = false, preparing = false, draining = false;
@@ -105,7 +106,7 @@ async function selectSentence(row){if(active||importing)return;if(uiView!=='revi
 const emptyTemplate = $('empty').cloneNode(true);
 function getWorker(role='asr') {
   if (!workers.has(role)) {
-    const worker = new Worker('./inference-worker.js', { type: 'module' });workers.set(role,worker);
+    const worker = new Worker('./inference-worker.js?v=0.5.1', { type: 'module' });workers.set(role,worker);
     worker.onmessage = ({ data }) => {
       const task = pending.get(data.id); if (!task) return;
       if (data.type === 'progress') { $('progress').hidden = false; if (Number.isFinite(data.progress)) { $('progress').value = data.progress; $('progress').max = 100; } else $('progress').removeAttribute('value'); $('modelInfo').textContent = `${data.file || '加载模型'}${Number.isFinite(data.progress) ? ` · ${Math.round(data.progress)}%` : ''}`; return; }
@@ -124,13 +125,9 @@ function model(action, data = {}, transfer = []) {
     pending.set(id, { resolve, reject, timer }); w.postMessage({ id, action, ...data }, transfer);
   });
 }
-async function cacheShell() {
-  if (!('serviceWorker' in navigator)) throw new Error('浏览器不支持离线缓存，请使用 Chrome 或 Edge。');
-  await navigator.serviceWorker.register('./sw.js?v=0.5.0-final4'); await navigator.serviceWorker.ready;
-  if (!navigator.serviceWorker.controller) await new Promise((resolve, reject) => { const timeout = setTimeout(() => reject(new Error('离线缓存尚未接管页面，请刷新后再试。')), 10000); navigator.serviceWorker.addEventListener('controllerchange', () => { clearTimeout(timeout); resolve(); }, { once: true }); });
-}
+function cacheShell(){return registerOfflineCache(navigator.serviceWorker,new URL('./sw.js?v=0.5.1',location.href).href);}
 async function prepare(download = true) {
-  await cacheShell();
+  void cacheShell();
   const offline = $('mode').value === 'offline'; const direction = $('direction').value;
   notify(download ? '正在准备语音识别和翻译模型。请保持页面打开；首次下载可能需要数分钟。' : '正在从本机缓存加载模型…');
   const tasks=[model('init', { direction, offline:false, download,role:'asr' })];if(offline)tasks.push(model('init',{direction,offline:true,download,role:'translation'}));await Promise.all(tasks);
@@ -202,7 +199,7 @@ async function start(options={}) {
     stopPlayback();$('micPreview').pause();
     runDirection = $('direction').value; runMode = $('mode').value;
     context = new AudioContext({ sampleRate: 16000 }); await context.resume();
-    await context.audioWorklet.addModule('./audio-worklet.js');
+    await context.audioWorklet.addModule('./audio-worklet.js?v=0.5.1');
     capture = new AudioWorkletNode(context, 'classbridge-capture');
     offset = elapsed;
     await beginRecording(sessionId,offset,$('keepRecording').checked,message=>notify(message,true));
@@ -356,7 +353,7 @@ $('loadAndTranslateLink').onclick=async()=>{let supplied;try{if(active||initiali
   const capturePromise=requestDisplayAudio();initializing=true;controls();supplied=await capturePromise;await resetCurrent(link.title);sourceLink=link.url;uiView='review';workspaceChosen=true;openVideoLink(link);save();$('linkDialog').close();initializing=false;await start({providedStream:supplied});if(active){requestNetworkPlayback();externalState('listening','音频已连接，视频正在请求播放；若未自动播放，请点击视频里的播放键。');}
 }catch(e){if(supplied&&!active)supplied.getTracks().forEach(t=>t.stop());$('linkStatus').textContent=e.message;notify(`外链实时翻译未启动：${e.message}`,true);externalState('error',e.message);}finally{initializing=false;controls();}};
 setInterval(()=>{if(active&&currentVideoLink()&&liveSource==='system'&&performance.now()-lastAudioSignal>8000)externalState('silent',performance.now()-lastCaptureSignal>3000?'没有收到音频采样。请重新连接浏览器标签页音频。':'已连接但未检测到声音。请播放视频、取消静音，并确认共享的是当前标签页音频。');},1000);
-$('localSpeedTest').onclick=async()=>{preparing=true;controls();let decoder;try{await cacheShell();await model('init',{direction:'en-zh',offline:false,download:false,role:'asr'});decoder=new AudioContext({sampleRate:16000});const response=await fetch('./sample.wav');const buffer=await decoder.decodeAudioData(await response.arrayBuffer());const samples=resample(buffer.getChannelData(0),buffer.sampleRate).slice(0,32000);const started=performance.now();await model('transcribe',{audio:samples,direction:'en-zh',timestamps:false},[samples.buffer]);const seconds=(performance.now()-started)/1000;notify(`本机测试：2 秒语音，识别耗时 ${seconds.toFixed(2)} 秒（不含翻译与分段等待）。${seconds>=1.8?'本机 CPU 难以跟上 1.8 秒分段，建议极速在线或云端语音 API。':'本机识别耗时低于当前最快分段，仍需加上翻译与网络等待。'}`);}catch(e){notify(`速度测试失败：${e.message}。请先准备本地识别模型。`,true);}finally{await decoder?.close().catch(()=>{});preparing=false;controls();}};
+$('localSpeedTest').onclick=async()=>{preparing=true;controls();let decoder;try{void cacheShell();await model('init',{direction:'en-zh',offline:false,download:false,role:'asr'});decoder=new AudioContext({sampleRate:16000});const response=await fetch('./sample.wav');const buffer=await decoder.decodeAudioData(await response.arrayBuffer());const samples=resample(buffer.getChannelData(0),buffer.sampleRate).slice(0,32000);const started=performance.now();await model('transcribe',{audio:samples,direction:'en-zh',timestamps:false},[samples.buffer]);const seconds=(performance.now()-started)/1000;notify(`本机测试：2 秒语音，识别耗时 ${seconds.toFixed(2)} 秒（不含翻译与分段等待）。${seconds>=1.8?'本机 CPU 难以跟上 1.8 秒分段，建议极速在线或云端语音 API。':'本机识别耗时低于当前最快分段，仍需加上翻译与网络等待。'}`);}catch(e){notify(`速度测试失败：${e.message}。请先准备本地识别模型。`,true);}finally{await decoder?.close().catch(()=>{});preparing=false;controls();}};
 $('cloudUrl').value=cloudConfig().url;$('cloudModel').value=cloudConfig().model;$('saveCloudConfig').onclick=()=>{try{saveCloud({url:$('cloudUrl').value,model:$('cloudModel').value},$('cloudKey').value);$('cloudKey').value='';$('cloudStatus').textContent='语音 API 配置已应用，密钥仅留在本页内存；请再选择“云端语音 API”引擎。';}catch(e){$('cloudStatus').textContent=e.message;}};$('clearCloudKey').onclick=()=>{clearCloudKey();$('cloudKey').value='';$('cloudStatus').textContent='语音密钥已清除。';};
 $('freeMode').onclick=async()=>{
  if(currentVideoLink()){notify('免 Key 麦克风识别不能直接读取外链音频；外链音频仍需共享后使用本地识别。',true);return;}
@@ -373,8 +370,8 @@ initializeApiSettings(() => setMode($('mode').value), notify);
 try{const preferences=JSON.parse(localStorage.getItem('classbridge-view-preferences')||'{}');for(const id of ['showVideoSubtitles','hideTranslations','continuousPlay','loopSentence'])if(typeof preferences[id]==='boolean')$(id).checked=preferences[id];document.body.classList.toggle('overlay-off',!$('showVideoSubtitles').checked);document.body.classList.toggle('hide-translations',$('hideTranslations').checked);}catch{}
 for(const id of ['showVideoSubtitles','hideTranslations','continuousPlay','loopSentence'])$(id).addEventListener('change',()=>{try{localStorage.setItem('classbridge-view-preferences',JSON.stringify(Object.fromEntries(['showVideoSubtitles','hideTranslations','continuousPlay','loopSentence'].map(name=>[name,$(name).checked]))));}catch{}});
 initializePlayer();void refreshLibrary();void(async()=>{const asset=(await sessionAssets(sessionId)).find(a=>a.kind==='file');if(asset)await previewFile(asset.id);else if(sourceLink)openVideoLink(parseVideoLink(sourceLink));controls();})().catch(e=>notify(`媒体恢复失败：${e.message}`,true));
-setMode('online'); network(); controls(); render(); void devices(); cacheShell().catch(e => notify(e.message, true));
+setMode('online'); network(); controls(); render(); void devices(); void cacheShell();
 
 if(['localhost','127.0.0.1'].includes(location.hostname)&&new URLSearchParams(location.search).get('qa')==='capture'){window.classbridgeCaptureQA={link(url){openVideoLink(parseVideoLink(url));controls();},async start(stream){$('showVideoSubtitles').checked=true;document.body.classList.remove('overlay-off');$('source').value='system';$('engine').value='local';setMode('offline');await start({providedStream:stream});},stop,paint(text,translation=''){updateLiveDraft(text);if(translation)draftCaption.apply(draftCaption.token(),translation);updateSelection();},status:()=>({active,rows:rows.length,pending:queue.length+translationQueue.length+translationRunning+(draining?1:0),overlay:$('overlayOriginal').textContent,sidebar:$('liveCaptionRow')?.querySelector('.original')?.textContent||$('captions').querySelector('.active-row .original')?.textContent||'',overlayTranslation:$('overlayTranslation').textContent,sidebarTranslation:$('liveCaptionRow')?.querySelector('.translation')?.textContent||$('captions').querySelector('.active-row .translation')?.textContent||'',captionVisible:getComputedStyle(document.querySelector('.video-captions')).display!=='none'&&Number(getComputedStyle(document.querySelector('.video-captions')).zIndex)>Number(getComputedStyle($('networkPlayer')).zIndex),link:!!currentVideoLink()})};}
 
-document.body.dataset.uiReady='0.5.0-final4';
+document.body.dataset.uiReady='0.5.1';

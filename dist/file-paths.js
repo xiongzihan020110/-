@@ -1,4 +1,4 @@
-import { database } from './media-store.js';
+import { database } from './media-store.js?v=0.5.1';
 let importDirectory,exportDirectory;
 export const safeName=name=>{let result=String(name||'课堂').replace(/[\\/:*?"<>|\x00-\x1f]/g,'_').replace(/[. ]+$/g,'').slice(0,160);if(/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(result))result='_'+result;return result||'课堂';};
 async function remember(id,handle){const db=await database();return new Promise((resolve,reject)=>{const tx=db.transaction('preferences','readwrite');tx.objectStore('preferences').put({id,handle});tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});}

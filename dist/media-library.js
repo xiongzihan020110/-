@@ -1,6 +1,6 @@
-import { saveAsset, sessionAssets, getAsset } from './media-store.js';
-import { RATE, pcm16, wavHeader, joinPcmParts, toWav } from './media-core.js';
-import { saveToDisk } from './file-paths.js';
+import { saveAsset, sessionAssets, getAsset } from './media-store.js?v=0.5.1';
+import { RATE, pcm16, wavHeader, joinPcmParts, toWav } from './media-core.js?v=0.5.1';
+import { saveToDisk } from './file-paths.js?v=0.5.1';
 const $=id=>document.getElementById(id);
 let recordParts=[],recordLength=0,recordPosition=0,recordOffset=0,recordSession,saveChain=Promise.resolve(),storageFailure,recordEnabled=false;
 let playerUrl,rangeEnd=0,loopRange=false,rangeStart=0,timelineOffset=0;

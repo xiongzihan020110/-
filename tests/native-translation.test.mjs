@@ -1,5 +1,5 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';
-import {nativeAvailability,prepareNative,translateNative,nativePrepared} from '../dist/native-translation.js?v=0.5.0-final4';
+import {nativeAvailability,prepareNative,translateNative,nativePrepared} from '../dist/native-translation.js?v=0.5.1';
 import {endpointFor,translateOnline} from '../dist/translation-api.js';
 test('native translation starts language-pack creation in the click call and reuses it',async()=>{
  let created=0,progress=0;const host={Translator:{availability:async()=> 'downloadable',create:opts=>{created++;assert.deepEqual({sourceLanguage:opts.sourceLanguage,targetLanguage:opts.targetLanguage},{sourceLanguage:'en',targetLanguage:'zh'});opts.monitor({addEventListener:(name,handler)=>handler({loaded:.5})});return Promise.resolve({translate:async text=>`译文：${text}`});}}};

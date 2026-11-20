@@ -1,4 +1,4 @@
-import {toWav} from './media-core.js';import {redact} from './translation-api.js';
+import {toWav} from './media-core.js?v=0.5.1';import {redact} from './translation-api.js?v=0.5.1';
 let config={url:'',model:''},key='';
 try{const saved=JSON.parse(localStorage.getItem('classbridge-cloud-speech')||'{}');config={url:String(saved.url||''),model:String(saved.model||'')};}catch{}
 export function cloudConfig(){return {...config};}

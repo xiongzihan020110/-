@@ -1,4 +1,4 @@
-import {speechSignal,recognitionOptions} from './speech-core.js';
+import {speechSignal,recognitionOptions} from './speech-core.js?v=0.5.1';
 let runtime; let asr; let asrId; const translators = new Map(); let chain = Promise.resolve();
 const send = data => self.postMessage(data);
 const translationModel = direction => direction === 'en-zh' ? 'Xenova/opus-mt-en-zh' : 'Xenova/opus-mt-zh-en';
