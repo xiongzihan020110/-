@@ -1,5 +1,5 @@
-import { splitForApi } from './core.js?v=0.5.1';
-import {translateNative} from './native-translation.js?v=0.5.1';
+import { splitForApi } from './core.js?v=0.5.2';
+import {translateNative} from './native-translation.js?v=0.5.2';
 
 export const PROVIDERS = {
   native: { label: 'Chrome 内置翻译 · 免费免 Key', protocol: 'native', baseUrl: '', model: '' },

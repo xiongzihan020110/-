@@ -1,4 +1,4 @@
-import { resample } from './core.js?v=0.5.1';
+import { resample } from './core.js?v=0.5.2';
 const RATE=16000;
 const aborted=signal=>{if(signal.aborted)throw new DOMException('已取消导入','AbortError');};
 export async function processFile(file,onAudio,onProgress,signal,options={}){
@@ -20,7 +20,7 @@ export async function processFile(file,onAudio,onProgress,signal,options={}){
     }
     if(!Number.isFinite(duration)||duration<=0)throw new Error('无法读取媒体时长，请将文件转换为有完整时长信息的 MP4 或 WAV');
     // Streaming fallback bounds decoded memory and supports playable video containers.
-    onProgress(0,duration,'流式读取（按播放速度处理）');await ctx.audioWorklet.addModule('./audio-worklet.js?v=0.5.1');
+    onProgress(0,duration,'流式读取（按播放速度处理）');await ctx.audioWorklet.addModule('./audio-worklet.js?v=0.5.2');
     const node=new AudioWorkletNode(ctx,'classbridge-capture'),source=ctx.createMediaElementSource(media);source.connect(node);node.connect(ctx.destination);await ctx.resume();
     let parts=[],length=0,position=0,chain=Promise.resolve(),failed;
     const flush=()=>{if(!length)return;const audio=new Float32Array(length);let p=0;for(const part of parts){audio.set(part,p);p+=part.length;}const start=position/RATE;position+=length;parts=[];length=0;chain=chain.then(async()=>{aborted(signal);await onAudio({audio,start,end:Math.min(duration,position/RATE),approximate:true});onProgress(Math.min(duration,position/RATE),duration,'流式读取');}).catch(e=>{failed=e;media.pause();});};

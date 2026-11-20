@@ -1,27 +1,28 @@
-import {registerOfflineCache} from './startup.js?v=0.5.1';
-import {workflowView} from './workflow.js?v=0.5.1';
-import {prepareNative,nativeAvailability,nativePrepared} from './native-translation.js?v=0.5.1';
-import { Segmenter, resample, stamp, toSrt } from './core.js?v=0.5.1';
-import { translateOnline, validateConfig } from './translation-api.js?v=0.5.1';
-import { getOnlineConfig, getApiKey, apiLabel, onlineHint, initializeApiSettings, useNativeProvider } from './api-settings.js?v=0.5.1';
-import { saveSession, getSession, listSessions, sessionAssets } from './media-store.js?v=0.5.1';
-import { beginRecording, recordSamples, finishRecording, playRange, initializePlayer, exportRecording, keepFile, stopPlayback,previewFile } from './media-library.js?v=0.5.1';
-import { sentenceRanges } from './media-core.js?v=0.5.1';
-import { processFile } from './file-import.js?v=0.5.1';
-import { browserSpeech, speechSupported } from './browser-speech.js?v=0.5.1';
-import { restoreDirectories,directoryNames,chooseDirectory,clearDirectories,pickMediaFile,saveToDisk } from './file-paths.js?v=0.5.1';
-import { parseSubtitles } from './subtitles.js?v=0.5.1';
-import { cloudConfig,validateCloud,saveCloud,clearCloudKey,recognizeCloud } from './cloud-speech.js?v=0.5.1';
-import { parseVideoLink,openVideoLink,closeVideoLink,currentVideoLink,requestNetworkPlayback } from './video-links.js?v=0.5.1';
-import { DraftCaption,captionFrame,captionTranslation } from './caption-state.js?v=0.5.1';
-import { requestDisplayAudio } from './capture-audio.js?v=0.5.1';
+import {externalPresentation,recordingCovers} from './review-state.js?v=0.5.2';
+import {registerOfflineCache} from './startup.js?v=0.5.2';
+import {workflowView} from './workflow.js?v=0.5.2';
+import {prepareNative,nativeAvailability,nativePrepared} from './native-translation.js?v=0.5.2';
+import { Segmenter, resample, stamp, toSrt } from './core.js?v=0.5.2';
+import { translateOnline, validateConfig } from './translation-api.js?v=0.5.2';
+import { getOnlineConfig, getApiKey, apiLabel, onlineHint, initializeApiSettings, useNativeProvider } from './api-settings.js?v=0.5.2';
+import { saveSession, getSession, listSessions, sessionAssets } from './media-store.js?v=0.5.2';
+import { beginRecording, recordSamples, finishRecording, playRange, initializePlayer, exportRecording, keepFile, stopPlayback,previewFile } from './media-library.js?v=0.5.2';
+import { sentenceRanges } from './media-core.js?v=0.5.2';
+import { processFile } from './file-import.js?v=0.5.2';
+import { browserSpeech, speechSupported } from './browser-speech.js?v=0.5.2';
+import { restoreDirectories,directoryNames,chooseDirectory,clearDirectories,pickMediaFile,saveToDisk } from './file-paths.js?v=0.5.2';
+import { parseSubtitles } from './subtitles.js?v=0.5.2';
+import { cloudConfig,validateCloud,saveCloud,clearCloudKey,recognizeCloud } from './cloud-speech.js?v=0.5.2';
+import { parseVideoLink,openVideoLink,closeVideoLink,currentVideoLink,requestNetworkPlayback } from './video-links.js?v=0.5.2';
+import { DraftCaption,captionFrame,captionTranslation } from './caption-state.js?v=0.5.2';
+import { requestDisplayAudio } from './capture-audio.js?v=0.5.2';
 const $ = id => document.getElementById(id);
 const KEY = 'classbridge-session-v1';
 let rows = [], elapsed = 0, active = false, initializing = false, preparing = false, draining = false;
 let stream, context, capture, segmenter, startClock, offset = 0, sequence = 0, queue = [], workers = new Map();
 let liveSource, runDirection, runMode, runApiConfig, pending = new Map(), requestId = 0, fontSize = 22;
 let modelReady = new Set();
-let uiView='live',workspaceChosen=false;
+let uiView='live',workspaceChosen=false,mediaConfigOpen=false,recordingRanges=[];
 let sessionId=crypto.randomUUID(),createdAt=Date.now(),persistChain=Promise.resolve(),importing=false,importAbort,speech,runEngine,translationQueue=[],translationRunning=0,liveDraft='',lastLatency=0,stopping=false,flushCapture;
 let sourceLink=null;const draftCaption=new DraftCaption();let externalPhase='idle',lastAudioSignal=0,lastCaptureSignal=0,lastCaptionScroll=0;
 let selectedRowId=null,draftTranslation='',draftTimer,draftRequest=false,draftEpoch=0,lastDraftSent='';
@@ -55,7 +56,10 @@ function syncWorkspaceUi(locked,busy,working){
   document.body.classList.toggle('view-live',!state.review);document.body.classList.toggle('view-review',state.review);
   for(const [id,value] of [['liveNav',!state.review],['historyNav',state.review]]){$(id).classList.toggle('active',value);$(id).setAttribute('aria-pressed',String(value));}
   $('importButtonLabel').textContent=$('mode').value==='online'&&getOnlineConfig().provider==='native'&&!nativePrepared($('direction').value)?'先准备免费翻译，再导入':'＋ 导入音频 / 视频';
-  $('mediaSetup').hidden=!state.review;$('liveSetup').hidden=false;$('liveWelcome').hidden=state.review;$('mediaWelcome').hidden=!state.review;
+  const hasMedia=!!currentVideoLink()||!!$('practicePlayer').getAttribute('src');if(hasMedia)$('importButtonLabel').textContent='更换文件';$('linkOpen').textContent=currentVideoLink()?'更换视频链接':'粘贴视频链接';document.body.classList.toggle('has-media',hasMedia);document.body.classList.toggle('has-external',!!currentVideoLink());
+  $('mediaConfigToggle').hidden=!hasMedia;$('mediaConfigToggle').setAttribute('aria-expanded',String(mediaConfigOpen));$('mediaConfigToggle').textContent=mediaConfigOpen?'收起翻译设置 ⌃':'翻译设置 ⌄';$('mediaConfigSummary').textContent=`${$('direction').value==='en-zh'?'英语 → 简体中文':'中文 → 英语'} · ${$('quickProfile').value==='offline'?'离线模式':apiLabel()}`;
+  $('subtitleClockNote').hidden=!currentVideoLink();$('timer').hidden=state.review;document.querySelector('.video-captions').hidden=!!currentVideoLink()&&!active;
+  $('mediaSetup').hidden=!state.review;$('liveSetup').hidden=state.review&&hasMedia&&!mediaConfigOpen;$('liveWelcome').hidden=state.review;$('mediaWelcome').hidden=!state.review;
   $('start').hidden=!state.showCapture;$('start').textContent=state.primaryLabel;$('start').classList.toggle('is-running',active);$('captureState').textContent=state.status;
   $('reviewTransport').hidden=!state.showPlayback;$('reviewRecording').hidden=!state.canReviewRecording;
   $('quickProfile').value=$('mode').value==='offline'?'offline':getOnlineConfig().provider==='native'?'native':'custom';
@@ -65,7 +69,7 @@ function syncWorkspaceUi(locked,busy,working){
   if(state.review&&!$('practicePlayer').getAttribute('src')&&!currentVideoLink()&&rows.some(r=>!r.demo)){$('mediaEmptyTitle').textContent='课堂录音已保留';$('mediaEmptyHint').textContent='点击右侧任意一句字幕，定位原声；也可以点击下方播放按钮连续回听。';}else{$('mediaEmptyTitle').textContent='你的精听工作台';$('mediaEmptyHint').textContent='从上方导入音视频，或粘贴哔站 / YouTube 链接。已有录音可从课堂库打开。';}
   for(const id of ['previousSentence','nextSentence'])$(id).disabled=active||importing||!rows.some(r=>!r.demo);
   $('playPause').disabled=active||importing||(!rows.some(r=>!r.demo)&&!$('practicePlayer').getAttribute('src'));$('seekBar').disabled=active||importing||!$('practicePlayer').getAttribute('src');
-  $('closeNetworkVideo').hidden=!currentVideoLink();
+  $('closeNetworkVideo').hidden=!currentVideoLink();if(!currentVideoLink())$('recordingReview').hidden=true;syncExternalState(busy,working);
 }
 function selectWorkspace(view){if(active||initializing||preparing||importing||draining||translationRunning||translationQueue.length){notify('请先暂停并等待当前字幕处理完成，再切换工作区。',true);return;}uiView=view;workspaceChosen=true;stopPlayback();if(view==='live'&&currentVideoLink())closeVideoLink();if(view==='review'&&sourceLink&&!currentVideoLink()){try{openVideoLink(parseVideoLink(sourceLink));}catch{}}controls();notify(view==='live'?'选择声音来源和翻译方向，然后点击“开始翻译”。':'导入文件或粘贴视频链接；已有录音可从课堂库打开。');}
 function render() {
@@ -77,13 +81,13 @@ function render() {
     const row = document.createElement('article'); row.className = 'caption-row';
     row.dataset.rowId=r.id;row.tabIndex=0;row.onclick=e=>{if(!e.target.closest('button'))void selectSentence(r);};row.onkeydown=e=>{if(e.target===row&&(e.key==='Enter'||e.key===' ')){e.preventDefault();void selectSentence(r);}};
     const meta = document.createElement('div'); meta.className = 'row-meta';
-    const time = document.createElement('span'); time.textContent = `${index+1} · ${stamp(r.start)}`;
+    const time = document.createElement('span'); time.textContent = `${index+1} · ${r.clock==='recording'||(!r.clock&&sourceLink&&!r.mediaId)?'录音 ':''}${stamp(r.start)}`;
     const tag = document.createElement('span'); tag.className = 'tag'; tag.textContent = r.demo ? '示例 · 非实时' : r.mode === 'offline' ? '本地离线' : r.apiConfig?.provider==='native'?'本机翻译':'在线翻译';
     meta.append(time, tag);if(r.unconfirmed){const warning=document.createElement('span');warning.textContent='识别中断前的临时原文 · 请回听核对';meta.append(warning);}
     const original = document.createElement('p'); original.className = 'original'; original.textContent = r.original || '正在识别这一段语音…';
     const translated = document.createElement('p'); translated.className = `translation${r.state === 'failed' ? ' failed' : ''}`; translated.textContent = captionTranslation(r);
     row.append(meta, original, translated);
-    if(r.original&&!r.demo){const actions=document.createElement('div');actions.className='sentence-actions';const play=document.createElement('button');play.className='retry';play.textContent='▶ 回听这一句';play.disabled=active||importing;play.onclick=()=>selectSentence(r);actions.append(play);if(r.approximate){const note=document.createElement('span');note.textContent='时间约';actions.append(note);}row.append(actions);}
+    if(r.original&&!r.demo){const actions=document.createElement('div');actions.className='sentence-actions';const play=document.createElement('button');play.className='retry';const canReplay=!!r.mediaId||recordingCovers(r,recordingRanges);play.textContent=canReplay?(currentVideoLink()?'▶ 回听已保存录音':'▶ 回听这一句'):'未保存本句录音';play.disabled=active||importing||!canReplay;play.onclick=()=>selectSentence(r);actions.append(play);if(r.approximate){const note=document.createElement('span');note.textContent='分句时间约';actions.append(note);}row.append(actions);}
     if (r.state === 'failed' && r.original&&!r.unrecognized) { const retry = document.createElement('button'); retry.className = 'retry'; retry.textContent = '↻ 重试翻译'; retry.disabled = active || initializing || preparing || draining||importing||translationRunning>0; retry.onclick = () => retryRow(r); row.append(retry); }
     container.append(row);
   }
@@ -98,15 +102,17 @@ function updateSelection(){
   let provisional=$('liveCaptionRow');
   if(frame?.provisional){$('captions').querySelector('.empty')?.remove();if(!provisional){provisional=document.createElement('article');provisional.id='liveCaptionRow';provisional.className='caption-row provisional';provisional.dataset.rowId=frame.id;const meta=document.createElement('div');meta.className='row-meta';meta.textContent='实时临时字幕 · 确认后保存';const original=document.createElement('p');original.className='original';const translation=document.createElement('p');translation.className='translation';provisional.append(meta,original,translation);$('captions').append(provisional);}provisional.querySelector('.original').textContent=frame.original;provisional.querySelector('.translation').textContent=captionTranslation(frame);}else{provisional?.remove();if(!rows.length&&!$('captions').querySelector('.empty'))$('captions').append(emptyTemplate.cloneNode(true));}
   for(const element of $('captions').querySelectorAll('.caption-row'))element.classList.toggle('active-row',!!frame&&element.dataset.rowId===String(frame.id));
-  $('overlayOriginal').textContent=frame?.original||'';$('overlayTranslation').textContent=captionTranslation(frame);$('captionStateLabel').textContent=frame?(frame.provisional?'临时字幕 · 会修正':frame.state==='pending'?'识别已完成 · 正在翻译':'与侧栏同步'):'';
+  $('overlayOriginal').textContent=frame?.original||'';$('overlayTranslation').textContent=captionTranslation(frame);$('captionStateLabel').textContent=currentVideoLink()&&active?'实时识别 · 存在处理延迟':frame?(frame.provisional?'临时字幕 · 会修正':frame.state==='pending'?'识别已完成 · 正在翻译':'与侧栏同步'):'';
   if(active&&frame&&$('follow').checked&&performance.now()-lastCaptionScroll>150){$('captions').querySelector('.active-row')?.scrollIntoView({block:'nearest',behavior:'smooth'});lastCaptionScroll=performance.now();}
 }
-function externalState(phase,text){externalPhase=phase;$('externalAudioBar').dataset.phase=phase;$('externalAudioState').textContent=text;}
-async function selectSentence(row){if(active||importing)return;if(uiView!=='review')selectWorkspace('review');if(currentVideoLink()){closeVideoLink();controls();}selectedRowId=row.id;updateSelection();try{await playRange(row,sessionId);}catch(e){notify(e.message,true);}}
+function syncExternalState(busy=initializing||preparing,working=draining||translationRunning>0||translationQueue.length>0){if(!currentVideoLink())return;const status=externalPresentation({active,busy,working,captured:elapsed>0,silent:externalPhase==='silent',error:externalPhase==='error'});$('externalCaptureState').textContent=status.label;$('connectExternalAudio').textContent=status.action;if(!active&&!busy&&!working&&externalPhase!=='error')$('externalAudioState').textContent=elapsed>0?'已保留字幕。视频播放与实时翻译分别控制；点击继续可重新连接音频。':'播放视频不会自动翻译。点击开始后，选择当前标签页并勾选共享音频。';}
+function externalState(phase,text){externalPhase=phase;$('externalAudioBar').dataset.phase=phase;$('externalAudioState').textContent=text;syncExternalState();}
+
+async function selectSentence(row){if(active||importing)return;if(!row.mediaId&&!recordingCovers(row,recordingRanges)){selectedRowId=row.id;updateSelection();notify('本句没有保存的录音。外链字幕时间是录音位置，不能据此跳转原视频。',true);return;}if(uiView!=='review')selectWorkspace('review');selectedRowId=row.id;updateSelection();try{if(currentVideoLink()){$('recordingReview').hidden=false;$('recordingReviewLabel').textContent=`录音 ${stamp(row.start)}–${stamp(row.end)} · ${row.original}`;await playRange(row,sessionId,{player:$('recordingPlayer'),autoplay:false,clip:true});notify('录音片段已就绪。请先暂停视频，再点击录音播放按钮。');}else await playRange(row,sessionId);}catch(e){notify(e.message,true);}}
 const emptyTemplate = $('empty').cloneNode(true);
 function getWorker(role='asr') {
   if (!workers.has(role)) {
-    const worker = new Worker('./inference-worker.js?v=0.5.1', { type: 'module' });workers.set(role,worker);
+    const worker = new Worker('./inference-worker.js?v=0.5.2', { type: 'module' });workers.set(role,worker);
     worker.onmessage = ({ data }) => {
       const task = pending.get(data.id); if (!task) return;
       if (data.type === 'progress') { $('progress').hidden = false; if (Number.isFinite(data.progress)) { $('progress').value = data.progress; $('progress').max = 100; } else $('progress').removeAttribute('value'); $('modelInfo').textContent = `${data.file || '加载模型'}${Number.isFinite(data.progress) ? ` · ${Math.round(data.progress)}%` : ''}`; return; }
@@ -125,7 +131,7 @@ function model(action, data = {}, transfer = []) {
     pending.set(id, { resolve, reject, timer }); w.postMessage({ id, action, ...data }, transfer);
   });
 }
-function cacheShell(){return registerOfflineCache(navigator.serviceWorker,new URL('./sw.js?v=0.5.1',location.href).href);}
+function cacheShell(){return registerOfflineCache(navigator.serviceWorker,new URL('./sw.js?v=0.5.2',location.href).href);}
 async function prepare(download = true) {
   void cacheShell();
   const offline = $('mode').value === 'offline'; const direction = $('direction').value;
@@ -160,7 +166,7 @@ async function devices() { try { const all = await navigator.mediaDevices.enumer
 $('refreshDevices').onclick = devices;
 let diagnosticUrl;
 $('testMicrophone').onclick=async()=>{
- let input,recorder;const parts=[];preparing=true;controls();stopPlayback();$('micPreview').pause();
+ let input,recorder;const parts=[];preparing=true;controls();stopPlayback();$('micPreview').pause();$('recordingReview').hidden=true;
  try{
   input=await navigator.mediaDevices.getUserMedia({audio:{deviceId:$('engine').value!=='browser'&&$('device').value?{exact:$('device').value}:undefined,channelCount:1,echoCancellation:true,noiseSuppression:true},video:false});
   const label=input.getAudioTracks()[0]?.label||'系统默认设备';
@@ -196,10 +202,10 @@ async function start(options={}) {
     if((await sessionAssets(sessionId).catch(()=>[])).some(a=>a.kind==='file'))await resetCurrent('实时课堂');
     if (runEngine==='local'&&!modelReady.has(currentKey())){if(currentVideoLink())externalState('preparing','正在准备识别模型。首次下载期间请先暂停视频。');await prepare(navigator.onLine);}
     if (stream.getAudioTracks().every(t => t.readyState !== 'live')) throw new Error('音频共享已结束，请重新开始');
-    stopPlayback();$('micPreview').pause();
+    stopPlayback();$('micPreview').pause();$('recordingReview').hidden=true;
     runDirection = $('direction').value; runMode = $('mode').value;
     context = new AudioContext({ sampleRate: 16000 }); await context.resume();
-    await context.audioWorklet.addModule('./audio-worklet.js?v=0.5.1');
+    await context.audioWorklet.addModule('./audio-worklet.js?v=0.5.2');
     capture = new AudioWorkletNode(context, 'classbridge-capture');
     offset = elapsed;
     await beginRecording(sessionId,offset,$('keepRecording').checked,message=>notify(message,true));
@@ -249,7 +255,7 @@ function addRecognized(output,job){
   if(output.skipped==='no-speech')return;
   const text=(output.text||'').trim();if(!text||/^\[.*\]$/.test(text)){rows.push({id:++sequence,start:job.start,end:job.end,direction:job.direction,mode:job.mode,original:'[这一段未识别出文字，请回听录音]',unrecognized:true,state:'failed',error:'请检查输入音量或换用语音识别引擎'});save();render();notify('有语音片段未识别出文字，已标记时间，可回听录音。',true);return;}
   const chunks=output.chunks?.filter(c=>c.text?.trim())||[];const pieces=chunks.length?chunks.flatMap(c=>{const from=job.start+Math.max(0,Number(c.timestamp?.[0])||0),to=Math.min(job.end,job.start+(Number(c.timestamp?.[1])||job.end-job.start));return sentenceRanges(c.text,from,Math.max(from+.1,to)).map(r=>({...r,approximate:!!job.approximate||/[.!?。！？].+[^\s]/.test(c.text)}));}):sentenceRanges(text,job.start,job.end);
-  for(const piece of pieces){const row={...piece,id:++sequence,direction:job.direction,mode:job.mode,apiConfig:job.apiConfig,mediaId:job.mediaId,unconfirmed:!!job.unconfirmed,translation:'',state:'pending'};rows.push(row);translationQueue.push(row);if(active||job.engine)selectedRowId=row.id;}save();render();pumpTranslations();if(currentVideoLink()&&active)externalState('translating','已识别原文，正在生成译文；两处字幕使用同一句内容。');
+  for(const piece of pieces){const row={...piece,id:++sequence,direction:job.direction,mode:job.mode,apiConfig:job.apiConfig,mediaId:job.mediaId,clock:job.mediaId?'media':'recording',unconfirmed:!!job.unconfirmed,translation:'',state:'pending'};rows.push(row);translationQueue.push(row);if(active||job.engine)selectedRowId=row.id;}save();render();pumpTranslations();if(currentVideoLink()&&active)externalState('translating','已识别原文，正在生成译文；两处字幕使用同一句内容。');
   if(translationQueue.length>20&&active){notify('翻译队列积压，已暂停收音；原文和录音已保留。可换用更快的翻译 API。',true);void stop();}
 }
 function pumpTranslations(){
@@ -271,8 +277,8 @@ $('direction').onchange = controls; $('source').onchange = () => {if($('engine')
 async function resetCurrent(title='我的课堂'){closeVideoLink();save();await persistChain;stopPlayback();$('practicePlayer').removeAttribute('src');$('practicePlayer').load();rows=[];elapsed=0;sourceLink=null;selectedRowId=null;sessionId=crypto.randomUUID();createdAt=Date.now();$('course').value=title;save();render();await refreshLibrary();controls();}
 $('newSession').onclick = async()=>{await resetCurrent();selectWorkspace('live');notify('新课堂已准备好，之前的字幕与录音保留在本地课堂库。');};
 $('course').onchange = save;
-async function refreshLibrary(){try{const all=(await listSessions()).sort((a,b)=>b.updatedAt-a.updatedAt);$('savedSessions').replaceChildren(new Option('选择已保存的课堂',''));for(const item of all)$('savedSessions').add(new Option(`${item.course||'我的课堂'} · ${new Date(item.createdAt).toLocaleString('zh-CN')} · ${item.rows?.length||0} 句`,item.id));if(all.some(s=>s.id===sessionId))$('savedSessions').value=sessionId;}catch(e){notify(`本地课堂库不可用：${e.message}`,true);}}
-$('loadSession').onclick=async()=>{const id=$('savedSessions').value;if(!id)return;uiView='review';workspaceChosen=true;save();await persistChain;const data=await getSession(id);if(!data)return;closeVideoLink();stopPlayback();sessionId=data.id;sourceLink=typeof data.sourceLink==='string'?data.sourceLink:null;createdAt=data.createdAt;rows=data.rows||[];elapsed=data.elapsed||0;$('course').value=data.course||'我的课堂';for(const row of rows)if(row.state==='pending'){row.state='failed';row.error='处理已中断，可以重试翻译';}sequence=Math.max(0,...rows.map(r=>Number(r.id)||0));selectedRowId=null;save();render();$('libraryDialog').close();const media=(await sessionAssets(sessionId)).find(a=>a.kind==='file');if(media)await previewFile(media.id);else{$('practicePlayer').removeAttribute('src');$('practicePlayer').load();if(sourceLink)openVideoLink(parseVideoLink(sourceLink));}controls();notify('已打开本地课堂，点击字幕可定位原声并逐句精听。');};
+async function refreshLibrary(){try{recordingRanges=(await sessionAssets(sessionId)).filter(a=>a.kind==='pcm').map(a=>({start:a.start,end:a.end}));render();const all=(await listSessions()).sort((a,b)=>b.updatedAt-a.updatedAt);$('savedSessions').replaceChildren(new Option('选择已保存的课堂',''));for(const item of all)$('savedSessions').add(new Option(`${item.course||'我的课堂'} · ${new Date(item.createdAt).toLocaleString('zh-CN')} · ${item.rows?.length||0} 句`,item.id));if(all.some(s=>s.id===sessionId))$('savedSessions').value=sessionId;}catch(e){notify(`本地课堂库不可用：${e.message}`,true);}}
+$('loadSession').onclick=async()=>{const id=$('savedSessions').value;if(!id)return;uiView='review';workspaceChosen=true;save();await persistChain;const data=await getSession(id);if(!data)return;closeVideoLink();stopPlayback();sessionId=data.id;sourceLink=typeof data.sourceLink==='string'?data.sourceLink:null;createdAt=data.createdAt;rows=data.rows||[];elapsed=data.elapsed||0;$('course').value=data.course||'我的课堂';for(const row of rows)if(row.state==='pending'){row.state='failed';row.error='处理已中断，可以重试翻译';}sequence=Math.max(0,...rows.map(r=>Number(r.id)||0));selectedRowId=null;save();await refreshLibrary();render();$('libraryDialog').close();const media=(await sessionAssets(sessionId)).find(a=>a.kind==='file');if(media)await previewFile(media.id);else{$('practicePlayer').removeAttribute('src');$('practicePlayer').load();if(sourceLink)openVideoLink(parseVideoLink(sourceLink));}controls();notify('已打开本地课堂，点击字幕可定位原声并逐句精听。');};
 $('exportAudio').onclick=async()=>{try{const path=await exportRecording(sessionId,$('course').value);notify(`录音已导出至：${path}`);}catch(e){if(e.name!=='AbortError')notify(e.message,true);}};
 $('hideTranslations').onchange=()=>document.body.classList.toggle('hide-translations',$('hideTranslations').checked);
 $('importFile').addEventListener('click',event=>{if($('mode').value==='online'&&getOnlineConfig().provider==='native'&&!nativePrepared($('direction').value)){event.preventDefault();void(async()=>{preparing=true;controls();try{await prepareNative($('direction').value,p=>notify(`首次准备翻译语言包 ${p}%`));notify('免费翻译已准备好。现在点击“导入音频 / 视频”选择文件。');}catch(e){notify(e.message,true);}finally{preparing=false;controls();}})();}});
@@ -302,6 +308,7 @@ $('exportTxt').onclick=()=>download('txt');$('exportSrt').onclick=()=>download('
 $('smaller').onclick = () => { fontSize = Math.max(16, fontSize - 2); document.documentElement.style.setProperty('--caption', `${fontSize}px`); };
 $('larger').onclick = () => { fontSize = Math.min(44, fontSize + 2); document.documentElement.style.setProperty('--caption', `${fontSize}px`); };
 $('fullscreen').onclick = async () => { try { if (document.fullscreenElement) await document.exitFullscreen(); else await document.querySelector('.workspace').requestFullscreen(); } catch { notify('当前浏览器不允许进入全屏。'); } };
+$('mediaConfigToggle').onclick=()=>{mediaConfigOpen=!mediaConfigOpen;controls();};$('closeRecordingReview').onclick=()=>{stopPlayback();$('recordingReview').hidden=true;};
 $('historyNav').onclick=()=>selectWorkspace('review');$('liveNav').onclick=()=>selectWorkspace('live');
 $('reviewRecording').onclick=()=>{selectWorkspace('review');notify('点击右侧任意一句字幕即可回听；播放控件在画面下方。');};
 $('quickProfile').onchange=()=>{const profile=$('quickProfile').value;if(profile==='offline'){$('engine').value='local';setMode('offline');}else if(profile==='native'){useNativeProvider();$('engine').value=$('source').value==='mic'&&speechSupported()?'browser':'local';setMode('online');}else{setMode('online');$('apiSettings').click();}};
@@ -326,7 +333,7 @@ $('seekBar').oninput=()=>{const p=$('practicePlayer');if(Number.isFinite(p.durat
 const player=$('practicePlayer');
 player.addEventListener('loadedmetadata',()=>{$('stagePlaceholder').hidden=true;$('playerDuration').textContent=Number.isFinite(player.duration)?stamp(player.duration):'--:--';});
 player.addEventListener('emptied',()=>{$('stagePlaceholder').hidden=active;$('playerTime').textContent='00:00';$('playerDuration').textContent='00:00';$('seekBar').value=0;});
-player.addEventListener('play',()=>{$('playPause').textContent='Ⅱ';});player.addEventListener('pause',()=>{$('playPause').textContent='▶';});
+player.addEventListener('play',()=>{$('playPause').textContent='Ⅱ';controls();});player.addEventListener('pause',()=>{$('playPause').textContent='▶';});
 player.addEventListener('timeupdate',()=>{$('playerTime').textContent=stamp(player.currentTime);if(Number.isFinite(player.duration)&&player.duration>0)$('seekBar').value=player.currentTime/player.duration*1000;});
 document.addEventListener('classbridge-playback',event=>{const time=event.detail.time;const row=rows.find(r=>time>=r.start&&time<r.end);if(!row){selectedRowId=null;updateSelection();}else if(row.id!==selectedRowId){selectedRowId=row.id;updateSelection();if($('follow').checked)$('captions').querySelector('.active-row')?.scrollIntoView({block:'center',behavior:'smooth'});}});
 function updateLiveDraft(text){draftCaption.set(text);liveDraft=draftCaption.original;draftTranslation=draftCaption.translation;$('liveDraft').textContent=text?'临时原文：'+text:'';if(!text){draftTranslation='';draftEpoch++;lastDraftSent='';}updateSelection();if(!text){clearTimeout(draftTimer);draftTimer=null;}else if($('previewTranslation').checked&&!draftTimer)draftTimer=setTimeout(()=>{draftTimer=null;void previewLiveTranslation();},500);}
@@ -344,7 +351,7 @@ $('importSubtitleButton').onclick=async()=>{try{if(window.showOpenFilePicker)awa
 $('fastRealtime').onclick=()=>{if(currentVideoLink()){notify('麦克风极速识别不能读取外链音频。请使用播放器上方“连接视频音频并实时翻译”；也可在设置中选择云端语音 API。',true);return;}if(!speechSupported()){notify('此浏览器不支持流式在线识别，可选择本地停顿分句识别；建议使用 Windows Chrome。',true);return;}$('engine').value='browser';$('source').value='mic';setMode('online');$('settingsDialog').showModal();notify('已选择极速在线麦克风，音频会发送到浏览器语音服务；点击“开始听课”后可持续显示临时原文和译文。');};
 $('linkOpen').onclick=()=>{$('linkStatus').textContent='';if(sourceLink)$('videoUrl').value=sourceLink;$('linkDialog').showModal();};$('closeLink').onclick=()=>$('linkDialog').close();
 $('loadVideoLink').onclick=async()=>{try{if(active||importing)throw new Error('请先暂停当前识别或导入');const link=parseVideoLink($('videoUrl').value);$('openOriginalVideo').href=link.url;$('openOriginalVideo').hidden=false;await resetCurrent(link.title);stopPlayback();sourceLink=link.url;uiView='review';workspaceChosen=true;openVideoLink(link);save();externalState('idle','视频已载入，尚未连接音频。点击左侧按钮连接后才会实时翻译。');$('linkDialog').close();controls();notify('视频已载入。点击播放器上方“连接视频音频并实时翻译”，选择当前标签页并勾选音频。');}catch(e){$('linkStatus').textContent=e.message;}};
-$('closeNetworkVideo').onclick=()=>{closeVideoLink();sourceLink=null;save();controls();$('linkDialog').close();};
+$('closeNetworkVideo').onclick=()=>{stopPlayback();closeVideoLink();sourceLink=null;save();controls();$('linkDialog').close();};
 function externalEngine(){if($('engine').value==='browser'){$('engine').value='local';notify('浏览器流式识别只支持麦克风，视频音频使用本地识别；也可在设置中选择云端语音 API。');}$('source').value='system';}
 function connectExternal(){if(!currentVideoLink()){notify('请先载入一个视频链接。',true);return;}externalEngine();$('linkDialog').close();void start();}
 $('recognizeLink').onclick=connectExternal;$('connectExternalAudio').onclick=connectExternal;$('stopExternalAudio').onclick=()=>void stop();
@@ -374,4 +381,8 @@ setMode('online'); network(); controls(); render(); void devices(); void cacheSh
 
 if(['localhost','127.0.0.1'].includes(location.hostname)&&new URLSearchParams(location.search).get('qa')==='capture'){window.classbridgeCaptureQA={link(url){openVideoLink(parseVideoLink(url));controls();},async start(stream){$('showVideoSubtitles').checked=true;document.body.classList.remove('overlay-off');$('source').value='system';$('engine').value='local';setMode('offline');await start({providedStream:stream});},stop,paint(text,translation=''){updateLiveDraft(text);if(translation)draftCaption.apply(draftCaption.token(),translation);updateSelection();},status:()=>({active,rows:rows.length,pending:queue.length+translationQueue.length+translationRunning+(draining?1:0),overlay:$('overlayOriginal').textContent,sidebar:$('liveCaptionRow')?.querySelector('.original')?.textContent||$('captions').querySelector('.active-row .original')?.textContent||'',overlayTranslation:$('overlayTranslation').textContent,sidebarTranslation:$('liveCaptionRow')?.querySelector('.translation')?.textContent||$('captions').querySelector('.active-row .translation')?.textContent||'',captionVisible:getComputedStyle(document.querySelector('.video-captions')).display!=='none'&&Number(getComputedStyle(document.querySelector('.video-captions')).zIndex)>Number(getComputedStyle($('networkPlayer')).zIndex),link:!!currentVideoLink()})};}
 
-document.body.dataset.uiReady='0.5.1';
+document.body.dataset.uiReady='0.5.2';
+
+if(['localhost','127.0.0.1'].includes(location.hostname)&&new URLSearchParams(location.search).get('qa')==='review-layout'){
+ window.classbridgeReviewQA={async show(recorded=false){stopPlayback();closeVideoLink();$('practicePlayer').removeAttribute('src');$('practicePlayer').load();sessionId=crypto.randomUUID();recordingRanges=[];elapsed=43;rows=[{id:1,start:3,end:5,original:'Hello English learners.',translation:'英语学习者们，你们好。',clock:'recording',mode:'online',apiConfig:{provider:'native'},state:'done'},{id:2,start:8,end:10,original:'My name is Marco.',translation:'我的名字是马可。',clock:'recording',mode:'online',apiConfig:{provider:'native'},state:'done'}];sequence=2;$('course').value='外链布局与录音回听测试';sourceLink='https://www.bilibili.com/video/BV1B7411m7LV';uiView='review';workspaceChosen=true;openVideoLink(parseVideoLink(sourceLink));if(recorded){await beginRecording(sessionId,0,true,()=>{});recordSamples(Float32Array.from({length:43*16000},(_,i)=>.01*Math.sin(2*Math.PI*440*i/16000)));await finishRecording();}await refreshLibrary();controls();render();}};
+}

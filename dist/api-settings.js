@@ -1,5 +1,5 @@
-import {prepareNative} from './native-translation.js?v=0.5.1';
-import { PROVIDERS, normalizeConfig, validateConfig, endpointFor, translateOnline } from './translation-api.js?v=0.5.1';
+import {prepareNative} from './native-translation.js?v=0.5.2';
+import { PROVIDERS, normalizeConfig, validateConfig, endpointFor, translateOnline } from './translation-api.js?v=0.5.2';
 const STORAGE = 'classbridge-api-settings-v1';
 const $ = id => document.getElementById(id);
 let profiles = {}, selected = 'native', draftProvider = 'native';
